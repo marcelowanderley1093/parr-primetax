@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { useState } from "react";
 import { Loader2, Lock, Mail, Eye, EyeOff } from "lucide-react";
 import { useLocation } from "wouter";
-import { getLoginUrl } from "@/const";
 
 const LOGO_FULL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-full_0492e20f.jpg";
 
@@ -151,18 +150,6 @@ export default function LocalLogin() {
                   Entrar
                 </Button>
               </form>
-
-              <div className="mt-6 pt-4 border-t text-center">
-                <p className="text-xs text-muted-foreground mb-2">Administrador do sistema?</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => { window.location.href = getLoginUrl(); }}
-                  className="text-xs"
-                >
-                  Entrar com conta Manus
-                </Button>
-              </div>
             </CardContent>
           </Card>
         ) : (

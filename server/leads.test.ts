@@ -24,7 +24,7 @@ function createAuthContext(): TrpcContext {
     openId: "test-admin",
     email: "marcelo@primetax.com.br",
     name: "Marcelo",
-    loginMethod: "manus",
+    loginMethod: "local",
     role: "admin",
     createdAt: new Date(),
     updatedAt: new Date(),

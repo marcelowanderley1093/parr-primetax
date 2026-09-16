@@ -19,7 +19,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { LayoutDashboard, LogOut, PanelLeft, Home, ExternalLink, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
@@ -82,16 +81,6 @@ export default function DashboardLayout({
               className="w-full shadow-lg hover:shadow-xl transition-all"
             >
               Entrar com Email/Senha
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                window.location.href = getLoginUrl();
-              }}
-              size="lg"
-              className="w-full"
-            >
-              Entrar com conta Manus
             </Button>
           </div>
         </div>
