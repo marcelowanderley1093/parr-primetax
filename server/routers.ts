@@ -86,20 +86,23 @@ export const appRouter = router({
         status: "novo_lead",
       });
 
-      // Notify owner
+      // Notify owner (e-mail). Falha nunca derruba a criação do lead: notifyOwner não lança,
+      // o try/catch é defesa em profundidade e o log não inclui dados do lead.
       try {
         await notifyOwner({
           title: `Novo Lead PARR: ${input.nome}`,
-          content: `**Novo lead capturado na LP do PARR**\n\n` +
-            `**Nome:** ${input.nome}\n` +
-            `**Email:** ${input.email}\n` +
-            `**Telefone:** ${input.telefone}\n` +
-            `**CNPJ:** ${input.cnpj || "Não informado"}\n` +
-            `**Valor da Dívida:** ${input.valorDivida || "Não informado"}\n` +
-            `**Mensagem:** ${input.mensagem || "Sem mensagem"}\n`,
+          content:
+            `Novo lead capturado na LP do PARR\n\n` +
+            `Nome: ${input.nome}\n` +
+            `Email: ${input.email}\n` +
+            `Telefone: ${input.telefone}\n` +
+            `CNPJ: ${input.cnpj || "Não informado"}\n` +
+            `Valor da Dívida: ${input.valorDivida || "Não informado"}\n` +
+            `Mensagem: ${input.mensagem || "Sem mensagem"}\n\n` +
+            `Lead #${leadId}`,
         });
       } catch (e) {
-        console.error("[Notification] Failed to notify owner:", e);
+        console.error("[Notification] Falha inesperada ao notificar:", e instanceof Error ? e.message : String(e));
       }
 
       // Try Pipedrive integration
