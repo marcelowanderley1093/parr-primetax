@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Loader2, Lock, Mail, Eye, EyeOff } from "lucide-react";
 import { useLocation } from "wouter";
 
-const LOGO_FULL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-full_0492e20f.jpg";
+const LOGO_FULL = "/img/logo-primetax-full.jpg";
 
 export default function LocalLogin() {
   const [, setLocation] = useLocation();

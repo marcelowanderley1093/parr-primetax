@@ -26,8 +26,8 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
-const LOGO_FULL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-full_0492e20f.jpg";
-const LOGO_SMALL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-small_1a682f6d.jpg";
+const LOGO_FULL = "/img/logo-primetax-full.jpg";
+const LOGO_SMALL = "/img/logo-primetax-small.jpg";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Painel de Clientes", path: "/dashboard", adminOnly: false },

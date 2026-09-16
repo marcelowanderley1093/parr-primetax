@@ -32,8 +32,8 @@ import {
 
 const WHATSAPP_LINK = "https://wa.me/5511950725423?text=Ol%C3%A1%2C%20fui%20notificado%20no%20PARR%20e%20preciso%20de%20ajuda";
 
-const LOGO_FULL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-full_0492e20f.jpg";
-const LOGO_SMALL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-small_1a682f6d.jpg";
+const LOGO_FULL = "/img/logo-primetax-full.jpg";
+const LOGO_SMALL = "/img/logo-primetax-small.jpg";
 
 function Navbar() {
   const [open, setOpen] = useState(false);
@@ -375,7 +375,7 @@ function InstitucionalSection() {
           </div>
           <div className="bg-gradient-to-br from-[oklch(0.35_0.03_240)] to-[oklch(0.30_0.02_240)] rounded-2xl p-8 text-white">
             <div className="w-24 h-24 rounded-full overflow-hidden mb-6 mx-auto border-2 border-white/20 shadow-lg">
-              <img src="https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/marcelo-wanderley-photo_549a8c91.webp" alt="Marcelo Wanderley" className="w-full h-full object-cover object-top" />
+              <img src="/img/marcelo-wanderley.webp" alt="Marcelo Wanderley" className="w-full h-full object-cover object-top" />
             </div>
             <h3 className="text-xl font-bold text-center mb-2">Marcelo Wanderley</h3>
             <p className="text-white/70 text-center text-sm mb-4">CEO & Fundador da Primetax</p>
