@@ -4,9 +4,6 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   /** Origem publica do app, sem barra final (ex.: https://parr.primetax.com.br). */
   publicBaseUrl: (process.env.PUBLIC_BASE_URL ?? "").trim().replace(/\/+$/, ""),
-  // Removidos no commit de limpeza junto com os modulos _core orfaos que ainda os referenciam
-  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
-  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   googleCalendarClientId: process.env.GOOGLE_CALENDAR_CLIENT_ID ?? "",
   googleCalendarClientSecret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET ?? "",
   // Lidas em tempo de chamada (getter) para permitir teste sem reimportar o modulo.

@@ -48,7 +48,7 @@ beforeEach(async () => {
   localUsers.push({
     id: 1,
     nome: "Marcelo",
-    // e-mail legado com maiusculas e espaco, como pode existir no banco da Manus
+    // e-mail legado com maiusculas e espaco, como pode existir no banco de origem
     email: "  Marcelo@Primetax.com.br ",
     passwordHash: await bcrypt.hash("senha-temporaria", 4),
     role: "admin",

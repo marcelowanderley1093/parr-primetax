@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { SignJWT } from "jose";
 import { COOKIE_NAME, SESSION_APP_ID } from "../shared/const";
 
-// A sessão JWT é local: depende apenas de JWT_SECRET. Nenhuma variável da Manus
+// A sessão JWT é local: depende apenas de JWT_SECRET. Nenhuma variável da plataforma de origem
 // (VITE_APP_ID, OAUTH_SERVER_URL, OWNER_OPEN_ID) pode influenciar o resultado.
 process.env.JWT_SECRET = "segredo-de-teste-para-sessao-local";
 delete process.env.VITE_APP_ID;
@@ -34,9 +34,9 @@ describe("sessão JWT local", () => {
     expect(session).toEqual({ openId: "local-7", appId: SESSION_APP_ID, name: "Marcelo" });
   });
 
-  it("rejeita token assinado com appId diferente (sessão legada da Manus)", async () => {
+  it("rejeita token assinado com appId diferente (sessão legada do OAuth externo)", async () => {
     const secret = new TextEncoder().encode(process.env.JWT_SECRET);
-    const legacy = await new SignJWT({ openId: "manus-user", appId: "ce79CANE", name: "X" })
+    const legacy = await new SignJWT({ openId: "oauth-user", appId: "ce79CANE", name: "X" })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setExpirationTime("1h")
       .sign(secret);
