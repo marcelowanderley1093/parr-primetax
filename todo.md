@@ -1,0 +1,62 @@
+# Project TODO
+
+- [x] Database schema (leads, lead_notes, lead_status_history)
+- [x] Landing Page - Hero section com urgência PARR
+- [x] Landing Page - Seção "O que é o PARR" com dados alarmantes
+- [x] Landing Page - Seção Consequências (penhoras, CPF bloqueado)
+- [x] Landing Page - Seção Falhas Legais (argumentos de defesa)
+- [x] Landing Page - Seção Serviços Primetax
+- [x] Landing Page - Seção Depoimentos
+- [x] Landing Page - Seção FAQ
+- [x] Landing Page - Seção Institucional Primetax / CEO
+- [x] Formulário de captação (nome, email, telefone, CNPJ, valor dívida, mensagem, LGPD)
+- [x] Validação Zod no formulário
+- [x] Backend tRPC para salvar leads no banco
+- [x] Dashboard administrativo protegido por autenticação
+- [x] Kanban com 4 colunas (Novo Lead, Contato Inicial, Reunião Agendada, Proposta Enviada)
+- [x] Drag-and-drop para mover leads entre colunas
+- [x] Página de detalhes do lead com histórico e notas
+- [x] Timeline de mudanças de status
+- [x] Integração Google Calendar (modal ao mover para Reunião Agendada)
+- [x] Integração Pipedrive (criar Person + Deal automaticamente)
+- [x] Notificação ao owner quando novo lead é capturado
+- [x] Design visual Primetax (azul + laranja, tipografia profissional)
+- [x] Responsividade mobile da LP
+- [x] Testes vitest
+- [x] Link de acesso ao Dashboard visível na LP (navbar + footer)
+- [x] Identidade visual: substituir ícone Shield pelo logo PrimeTax Solutions (navbar, footer, dashboard)
+- [x] Atualizar paleta de cores conforme identidade visual PrimeTax (cinza escuro + turquesa/teal)
+- [x] Calendário Google Calendar integrado no Dashboard (visualização de eventos)
+- [x] Configuração de conta Google Calendar pelo administrador
+- [x] Admin inicial: marcelo@primetax.com.br
+- [x] Importação de leads via Excel (upload + parsing da planilha)
+- [x] Seção de vídeo explicativo do PARR na Landing Page (admin configura URL do vídeo)
+- [x] Corrigir botão de acesso ao Painel Admin no menu da Landing Page (visível e funcional)
+- [x] Bug: importação de leads via Excel causa erro DOM insertBefore
+- [x] Bug: Google Calendar mostra mensagem de variáveis não configuradas (necessário configurar credenciais)
+- [x] Adicionar campo 'Nome do Devedor Principal' no mapeamento de importação Excel
+- [x] Configurar Google Calendar OAuth via Google Cloud Console
+- [x] Painel de importações com lista de importações feitas e botão de excluir (exclui leads importados)
+- [x] Formato moeda (R$) no valor da dívida nos cards do Kanban
+- [x] Corrigir nome no card: mostrar nome do devedor solidário conforme mapeamento
+- [x] Permitir cancelar reunião com atualização no Google Calendar
+- [x] Permitir remarcar reunião com atualização no Google Calendar
+- [x] Bug: agendamento no Google Calendar não aparece na conta do usuário (fix timezone + redirect_uri)
+- [x] Bug: lista de importações com botão Excluir não aparece no Dashboard (fix: mostrar sempre + limpeza de leads antigos sem batchId)
+- [x] Bug: campo Nome no card mostra devedor principal em vez de devedor solidário (fix: auto-map prioriza Devedor Solidário)
+- [x] Bug: agendamento Google Calendar continua não aparecendo (fix: redirect_uri via x-forwarded headers + logs detalhados)
+- [x] Bug: redirect_uri_mismatch no Google Calendar (fix: usar ENV centralizado + logs detalhados)
+- [x] Adicionar campo Devedor Principal abaixo do CNPJ no card do lead
+- [x] Remover campo Mensagem do card e formulário de importação
+- [x] Permitir edição dos campos do card do lead
+- [x] Permitir exclusão do lead
+- [x] Trocar "Pistas" por "Clientes" no menu do dashboard
+- [x] Garantir campo Devedor Principal visível no card do Kanban abaixo do CNPJ
+- [x] Sistema de cadastro de usuários pelo admin (com senha de acesso)
+- [x] Garantir envio de email aos participantes no agendamento Google Calendar
+- [x] Colorir tags de agendamento no painel calendário
+- [x] Atualizar texto do alerta para "Alerta: +357 mil procedimentos até fevereiro de 2025"
+- [x] Corrigir texto "Nosso especialista explica de forma clara e objetiva como funciona o procedimento e o que você pode fazer para se proteger."
+- [x] Inserir foto do Marcelo Wanderley na caixa de especialista
+- [x] Vincular botão "Falar com Especialista Agora" ao WhatsApp +5511950725423
+- [x] Bug: erro NotFoundError removeChild ao cadastrar novo usuário

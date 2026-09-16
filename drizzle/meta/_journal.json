@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1774637369606,
+      "tag": "0000_romantic_bastion",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1774637577645,
+      "tag": "0001_silly_khan",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1774639679546,
+      "tag": "0002_talented_sauron",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1774648343507,
+      "tag": "0003_short_sage",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1774650432506,
+      "tag": "0004_nervous_betty_brant",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1774652283294,
+      "tag": "0005_illegal_blacklash",
+      "breakpoints": true
+    }
+  ]
+}
