@@ -11,9 +11,9 @@ importação Excel, Google Calendar, Pipedrive). Criado na Manus; em migração 
 React 19 + Vite 7 + Tailwind 4 (client/) · Express 4 + tRPC 11 (server/) · MySQL + Drizzle (drizzle/)
 · pnpm 10.4.1 · vitest. Build: `pnpm build` → `dist/index.js` + estáticos. Start: `pnpm start`.
 
-## Baseline medido na branch gate1-desacoplamento-manus (16/09/2026)
-- `pnpm install --frozen-lockfile` ok · `pnpm check` (tsc) exit 0 · `pnpm build` ok
-- `pnpm test`: 68 passed / 0 failed (10 arquivos). Nenhum teste depende de `.env`.
+## Baseline medido na main após o lote de fechamento (16/09/2026)
+- tsc 0, 68 passed / 0 failed, build ok, `pnpm install --frozen-lockfile` sem WARN.
+- `pnpm test`: 10 arquivos. Nenhum teste depende de `.env`.
 - Baseline anterior (a9eff43, Gate 0): 34 passed / 2 failed (google-calendar.test.ts exigia
   GOOGLE_CALENDAR_CLIENT_ID/SECRET; reescrito como teste puro no Gate 1).
 
@@ -73,8 +73,8 @@ lead_status_history · lead_imports · site_settings (inclui googleCalendarRefre
 
 ## Roteiro
 - Gate 0 — repositório saneado no GitHub + este arquivo. (feito)
-- Gate 1 — desacoplamento da Manus no código (despacho DESPACHO-PARR-01), testado localmente.
-  Branch `gate1-desacoplamento-manus`, 7 commits (a–g), aguardando revisão antes do merge na main.
+- Gate 1 — CONCLUÍDO. Desacoplamento da Manus no código (despacho DESPACHO-PARR-01). Merge d32bcce
+  na main; lote de fechamento (patch wouter, bloco pnpm, devDeps pnpm/add) na branch gate1-fechamento.
 - Gate 2 — provisionar VPS, exportar/importar banco com contagem por tabela, staging com Pipedrive
   e Calendar isolados.
 - Gate 3 — cutover: DNS parr.primetax.com.br, nova redirect URI no Google Cloud Console, smoke no
