@@ -6,6 +6,7 @@ import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { parseLocalOpenId } from "../localUsersHelpers";
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -123,6 +124,15 @@ class SDKServer {
 
     if (!user) {
       throw ForbiddenError("User not found");
+    }
+
+    // Usuario local desativado perde a sessao imediatamente (nao so no proximo login)
+    const localId = parseLocalOpenId(user.openId);
+    if (localId !== null) {
+      const localUser = await db.getLocalUserById(localId);
+      if (!localUser || !localUser.active) {
+        throw ForbiddenError("User inactive");
+      }
     }
 
     await db.upsertUser({

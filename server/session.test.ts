@@ -10,8 +10,10 @@ delete process.env.OAUTH_SERVER_URL;
 delete process.env.OWNER_OPEN_ID;
 
 const fakeUsers = new Map<string, any>();
+const fakeLocalUsers = new Map<number, any>();
 vi.mock("./db", () => ({
   getUserByOpenId: vi.fn(async (openId: string) => fakeUsers.get(openId)),
+  getLocalUserById: vi.fn(async (id: number) => fakeLocalUsers.get(id)),
   upsertUser: vi.fn(async () => undefined),
 }));
 
@@ -52,6 +54,7 @@ describe("sessão JWT local", () => {
 
   it("authenticateRequest devolve o usuário de `users` quando existe", async () => {
     fakeUsers.set("local-7", { id: 7, openId: "local-7", name: "Marcelo", role: "admin" });
+    fakeLocalUsers.set(7, { id: 7, active: 1 });
     const token = await sdk.createSessionToken("local-7", { name: "Marcelo" });
     const user = await sdk.authenticateRequest(reqWithCookie(token));
     expect(user.openId).toBe("local-7");
@@ -61,6 +64,13 @@ describe("sessão JWT local", () => {
   it("authenticateRequest lança Forbidden quando o openId não existe em `users` (sem consultar OAuth)", async () => {
     const token = await sdk.createSessionToken("local-999", { name: "Ninguém" });
     await expect(sdk.authenticateRequest(reqWithCookie(token))).rejects.toThrow(/User not found/);
+  });
+
+  it("authenticateRequest lança Forbidden quando o local_user foi desativado (sessão ainda válida)", async () => {
+    fakeUsers.set("local-8", { id: 8, openId: "local-8", name: "Ex", role: "user" });
+    fakeLocalUsers.set(8, { id: 8, active: 0 });
+    const token = await sdk.createSessionToken("local-8", { name: "Ex" });
+    await expect(sdk.authenticateRequest(reqWithCookie(token))).rejects.toThrow(/User inactive/);
   });
 
   it("authenticateRequest lança Forbidden sem cookie", async () => {

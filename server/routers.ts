@@ -7,6 +7,8 @@ import { z } from "zod";
 import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { ENV } from "./_core/env";
+import { checkRateLimit, rateLimitKey, resetRateLimit } from "./_core/rateLimit";
+import { emailInput } from "./localUsersHelpers";
 
 const leadInputSchema = z.object({
   nome: z.string().min(2, "Nome é obrigatório"),
@@ -436,7 +438,7 @@ export const appRouter = router({
     }),
     create: adminProcedure.input(z.object({
       nome: z.string().min(2),
-      email: z.string().email(),
+      email: emailInput,
       role: z.enum(["user", "admin"]).default("user"),
       senha: z.string().min(6),
     })).mutation(async ({ input, ctx }) => {
@@ -479,15 +481,18 @@ export const appRouter = router({
   // Local user login (email/password)
   localAuth: router({
     login: publicProcedure.input(z.object({
-      email: z.string().email(),
+      email: emailInput,
       senha: z.string().min(1),
     })).mutation(async ({ input, ctx }) => {
       const bcrypt = await import("bcryptjs");
+      const limiterKey = rateLimitKey(ctx.req.ip, input.email);
+      checkRateLimit(limiterKey);
       const localUser = await db.getLocalUserByEmail(input.email);
       if (!localUser) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
       if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
       const valid = await bcrypt.compare(input.senha, localUser.passwordHash);
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
+      resetRateLimit(limiterKey);
 
       // Create or upsert into the main users table so the session system works
       const localOpenId = `local-${localUser.id}`;
@@ -520,16 +525,21 @@ export const appRouter = router({
     }),
 
     changePassword: publicProcedure.input(z.object({
-      email: z.string().email(),
+      email: emailInput,
       currentPassword: z.string().min(1),
       newPassword: z.string().min(6),
-    })).mutation(async ({ input }) => {
+    })).mutation(async ({ input, ctx }) => {
       const bcrypt = await import("bcryptjs");
+      const limiterKey = rateLimitKey(ctx.req.ip, input.email);
+      checkRateLimit(limiterKey);
       const localUser = await db.getLocalUserByEmail(input.email);
       if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Usuário não encontrado" });
+      if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
       const valid = await bcrypt.compare(input.currentPassword, localUser.passwordHash);
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
+      resetRateLimit(limiterKey);
       const newHash = await bcrypt.hash(input.newPassword, 10);
+      // updateLocalUserPassword tambem zera mustChangePassword (primeiro acesso concluido)
       await db.updateLocalUserPassword(localUser.id, newHash);
       return { success: true };
     }),
