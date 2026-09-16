@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { GOOGLE_CALENDAR_CALLBACK_PATH } from "../googleCalendar";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,7 +37,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // Google Calendar OAuth callback
-  app.get("/api/google-calendar/callback", async (req, res) => {
+  app.get(GOOGLE_CALENDAR_CALLBACK_PATH, async (req, res) => {
     try {
       const code = req.query.code as string;
       const { ENV: _ENV } = await import("./env.js");
@@ -46,9 +47,9 @@ async function startServer() {
       if (!code || !clientId || !clientSecret) {
         return res.status(400).send(`Missing parameters: code=${!!code}, clientId=${!!clientId}, clientSecret=${!!clientSecret}`);
       }
-      // Hardcode the published domain to match getAuthUrl and Google Console config
-      const PUBLISHED_DOMAIN = process.env.GOOGLE_CALENDAR_REDIRECT_DOMAIN || 'primetaxleads-ce79cane.manus.space';
-      const redirectUri = `https://${PUBLISHED_DOMAIN}/api/google-calendar/callback`;
+      // Mesma redirect URI usada em getAuthUrl (PUBLIC_BASE_URL + callback)
+      const { getGoogleCalendarRedirectUri } = await import("../googleCalendar");
+      const redirectUri = getGoogleCalendarRedirectUri();
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -9,6 +9,7 @@ import { notifyOwner } from "./_core/notification";
 import { ENV } from "./_core/env";
 import { checkRateLimit, rateLimitKey, resetRateLimit } from "./_core/rateLimit";
 import { emailInput } from "./localUsersHelpers";
+import { buildGoogleCalendarAuthUrl, getGoogleCalendarRedirectUri, getPublicBaseUrl } from "./googleCalendar";
 
 const leadInputSchema = z.object({
   nome: z.string().min(2, "Nome é obrigatório"),
@@ -553,13 +554,10 @@ export const appRouter = router({
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = ENV.googleCalendarClientId;
       console.log('[Google Calendar] getAuthUrl called, clientId present:', !!clientId, 'length:', clientId?.length);
-      if (!clientId) return { url: null, configured: false };
+      if (!clientId || !getPublicBaseUrl()) return { url: null, configured: false };
 
-      // Hardcode the published domain to avoid redirect_uri_mismatch behind reverse proxy
-      const PUBLISHED_DOMAIN = process.env.GOOGLE_CALENDAR_REDIRECT_DOMAIN || 'primetaxleads-ce79cane.manus.space';
-      const redirectUri = `https://${PUBLISHED_DOMAIN}/api/google-calendar/callback`;
-      const scope = "https://www.googleapis.com/auth/calendar";
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
+      // Redirect URI fixa em PUBLIC_BASE_URL (evita redirect_uri_mismatch atras do reverse proxy)
+      const url = buildGoogleCalendarAuthUrl(clientId, getGoogleCalendarRedirectUri());
       return { url, configured: true };
     }),
     disconnect: protectedProcedure.mutation(async () => {
