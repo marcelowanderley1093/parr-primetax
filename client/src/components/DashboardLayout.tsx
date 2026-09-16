@@ -19,7 +19,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { LayoutDashboard, LogOut, PanelLeft, Home, ExternalLink, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
@@ -27,8 +26,8 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
-const LOGO_FULL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-full_0492e20f.jpg";
-const LOGO_SMALL = "https://d2xsxph8kpxj0f.cloudfront.net/310419663029061734/ce79CANEMgyhDB3mYkEo3G/logo-primetax-small_1a682f6d.jpg";
+const LOGO_FULL = "/img/logo-primetax-full.jpg";
+const LOGO_SMALL = "/img/logo-primetax-small.jpg";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Painel de Clientes", path: "/dashboard", adminOnly: false },
@@ -82,16 +81,6 @@ export default function DashboardLayout({
               className="w-full shadow-lg hover:shadow-xl transition-all"
             >
               Entrar com Email/Senha
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                window.location.href = getLoginUrl();
-              }}
-              size="lg"
-              className="w-full"
-            >
-              Entrar com conta Manus
             </Button>
           </div>
         </div>

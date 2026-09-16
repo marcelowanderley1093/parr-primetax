@@ -1,36 +1,39 @@
 import { describe, expect, it } from "vitest";
+import {
+  buildGoogleCalendarAuthUrl,
+  GOOGLE_CALENDAR_CALLBACK_PATH,
+  getGoogleCalendarRedirectUri,
+} from "./googleCalendar";
 
-describe("Google Calendar credentials", () => {
-  it("GOOGLE_CALENDAR_CLIENT_ID is set and looks valid", () => {
-    const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
-    expect(clientId).toBeDefined();
-    expect(clientId).toBeTruthy();
-    expect(clientId!.length).toBeGreaterThan(10);
-    expect(clientId).toContain(".apps.googleusercontent.com");
+// Testes puros: nao dependem de GOOGLE_CALENDAR_CLIENT_ID/SECRET nem de PUBLIC_BASE_URL no ambiente.
+describe("Google Calendar - redirect URI", () => {
+  it("monta a redirect URI a partir da base publica", () => {
+    expect(getGoogleCalendarRedirectUri("https://parr.primetax.com.br")).toBe(
+      "https://parr.primetax.com.br" + GOOGLE_CALENDAR_CALLBACK_PATH
+    );
   });
 
-  it("GOOGLE_CALENDAR_CLIENT_SECRET is set and looks valid", () => {
-    const clientSecret = process.env.GOOGLE_CALENDAR_CLIENT_SECRET;
-    expect(clientSecret).toBeDefined();
-    expect(clientSecret).toBeTruthy();
-    expect(clientSecret!.length).toBeGreaterThan(10);
-    expect(clientSecret).toMatch(/^GOCSPX-/);
+  it("lanca erro claro quando PUBLIC_BASE_URL esta vazia", () => {
+    expect(() => getGoogleCalendarRedirectUri("")).toThrow(/PUBLIC_BASE_URL/);
+  });
+});
+
+describe("Google Calendar - URL de autorizacao", () => {
+  const clientId = "123456789-abc.apps.googleusercontent.com";
+  const redirectUri = "https://staging.parr.primetax.com.br/api/google-calendar/callback";
+  const url = new URL(buildGoogleCalendarAuthUrl(clientId, redirectUri));
+
+  it("aponta para accounts.google.com com client_id e redirect_uri codificados", () => {
+    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(url.searchParams.get("client_id")).toBe(clientId);
+    expect(url.searchParams.get("redirect_uri")).toBe(redirectUri);
+    expect(url.toString()).toContain(encodeURIComponent(redirectUri));
   });
 
-  it("can build OAuth authorization URL", () => {
-    const clientId = process.env.GOOGLE_CALENDAR_CLIENT_ID;
-    const redirectUri = "https://primetaxleads-ce79cane.manus.space/api/google-calendar/callback";
-    const scope = "https://www.googleapis.com/auth/calendar";
-
-    const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    authUrl.searchParams.set("client_id", clientId!);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", scope);
-    authUrl.searchParams.set("access_type", "offline");
-
-    expect(authUrl.toString()).toContain("accounts.google.com");
-    expect(authUrl.toString()).toContain("client_id=");
-    expect(authUrl.toString()).toContain("calendar");
+  it("pede escopo calendar, refresh token (offline) e consentimento", () => {
+    expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/calendar");
+    expect(url.searchParams.get("response_type")).toBe("code");
+    expect(url.searchParams.get("access_type")).toBe("offline");
+    expect(url.searchParams.get("prompt")).toBe("consent");
   });
 });

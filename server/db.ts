@@ -1,8 +1,7 @@
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers } from "../drizzle/schema";
 import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser } from "../drizzle/schema";
-import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -47,9 +46,6 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
     }
     if (!values.lastSignedIn) {
       values.lastSignedIn = new Date();
@@ -267,10 +263,16 @@ export async function createLocalUser(data: InsertLocalUser) {
   return result[0].insertId;
 }
 
+// Compara LOWER(TRIM()) no banco: registros legados podem ter maiusculas/espacos.
 export async function getLocalUserByEmail(email: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(localUsers).where(eq(localUsers.email, email)).limit(1);
+  const normalized = email.trim().toLowerCase();
+  const result = await db
+    .select()
+    .from(localUsers)
+    .where(sql`LOWER(TRIM(${localUsers.email})) = ${normalized}`)
+    .limit(1);
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -300,6 +302,15 @@ export async function updateLocalUserPassword(id: number, passwordHash: string) 
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(localUsers).set({ passwordHash, mustChangePassword: 0 }).where(eq(localUsers.id, id));
+}
+
+export async function updateLocalUserAdmin(
+  id: number,
+  data: { nome: string; passwordHash: string; role: "admin"; active: number; mustChangePassword: number }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(localUsers).set(data).where(eq(localUsers.id, id));
 }
 
 export async function updateLocalUserLastSignedIn(id: number) {

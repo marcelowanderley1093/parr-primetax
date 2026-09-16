@@ -7,6 +7,9 @@ import { z } from "zod";
 import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { ENV } from "./_core/env";
+import { checkRateLimit, rateLimitKey, resetRateLimit } from "./_core/rateLimit";
+import { emailInput } from "./localUsersHelpers";
+import { buildGoogleCalendarAuthUrl, getGoogleCalendarRedirectUri, getPublicBaseUrl } from "./googleCalendar";
 
 const leadInputSchema = z.object({
   nome: z.string().min(2, "Nome é obrigatório"),
@@ -84,20 +87,23 @@ export const appRouter = router({
         status: "novo_lead",
       });
 
-      // Notify owner
+      // Notify owner (e-mail). Falha nunca derruba a criação do lead: notifyOwner não lança,
+      // o try/catch é defesa em profundidade e o log não inclui dados do lead.
       try {
         await notifyOwner({
           title: `Novo Lead PARR: ${input.nome}`,
-          content: `**Novo lead capturado na LP do PARR**\n\n` +
-            `**Nome:** ${input.nome}\n` +
-            `**Email:** ${input.email}\n` +
-            `**Telefone:** ${input.telefone}\n` +
-            `**CNPJ:** ${input.cnpj || "Não informado"}\n` +
-            `**Valor da Dívida:** ${input.valorDivida || "Não informado"}\n` +
-            `**Mensagem:** ${input.mensagem || "Sem mensagem"}\n`,
+          content:
+            `Novo lead capturado na LP do PARR\n\n` +
+            `Nome: ${input.nome}\n` +
+            `Email: ${input.email}\n` +
+            `Telefone: ${input.telefone}\n` +
+            `CNPJ: ${input.cnpj || "Não informado"}\n` +
+            `Valor da Dívida: ${input.valorDivida || "Não informado"}\n` +
+            `Mensagem: ${input.mensagem || "Sem mensagem"}\n\n` +
+            `Lead #${leadId}`,
         });
       } catch (e) {
-        console.error("[Notification] Failed to notify owner:", e);
+        console.error("[Notification] Falha inesperada ao notificar:", e instanceof Error ? e.message : String(e));
       }
 
       // Try Pipedrive integration
@@ -436,7 +442,7 @@ export const appRouter = router({
     }),
     create: adminProcedure.input(z.object({
       nome: z.string().min(2),
-      email: z.string().email(),
+      email: emailInput,
       role: z.enum(["user", "admin"]).default("user"),
       senha: z.string().min(6),
     })).mutation(async ({ input, ctx }) => {
@@ -479,15 +485,18 @@ export const appRouter = router({
   // Local user login (email/password)
   localAuth: router({
     login: publicProcedure.input(z.object({
-      email: z.string().email(),
+      email: emailInput,
       senha: z.string().min(1),
     })).mutation(async ({ input, ctx }) => {
       const bcrypt = await import("bcryptjs");
+      const limiterKey = rateLimitKey(ctx.req.ip, input.email);
+      checkRateLimit(limiterKey);
       const localUser = await db.getLocalUserByEmail(input.email);
       if (!localUser) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
       if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
       const valid = await bcrypt.compare(input.senha, localUser.passwordHash);
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
+      resetRateLimit(limiterKey);
 
       // Create or upsert into the main users table so the session system works
       const localOpenId = `local-${localUser.id}`;
@@ -520,16 +529,21 @@ export const appRouter = router({
     }),
 
     changePassword: publicProcedure.input(z.object({
-      email: z.string().email(),
+      email: emailInput,
       currentPassword: z.string().min(1),
       newPassword: z.string().min(6),
-    })).mutation(async ({ input }) => {
+    })).mutation(async ({ input, ctx }) => {
       const bcrypt = await import("bcryptjs");
+      const limiterKey = rateLimitKey(ctx.req.ip, input.email);
+      checkRateLimit(limiterKey);
       const localUser = await db.getLocalUserByEmail(input.email);
       if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Usuário não encontrado" });
+      if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
       const valid = await bcrypt.compare(input.currentPassword, localUser.passwordHash);
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
+      resetRateLimit(limiterKey);
       const newHash = await bcrypt.hash(input.newPassword, 10);
+      // updateLocalUserPassword tambem zera mustChangePassword (primeiro acesso concluido)
       await db.updateLocalUserPassword(localUser.id, newHash);
       return { success: true };
     }),
@@ -540,13 +554,10 @@ export const appRouter = router({
     getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
       const clientId = ENV.googleCalendarClientId;
       console.log('[Google Calendar] getAuthUrl called, clientId present:', !!clientId, 'length:', clientId?.length);
-      if (!clientId) return { url: null, configured: false };
+      if (!clientId || !getPublicBaseUrl()) return { url: null, configured: false };
 
-      // Hardcode the published domain to avoid redirect_uri_mismatch behind reverse proxy
-      const PUBLISHED_DOMAIN = process.env.GOOGLE_CALENDAR_REDIRECT_DOMAIN || 'primetaxleads-ce79cane.manus.space';
-      const redirectUri = `https://${PUBLISHED_DOMAIN}/api/google-calendar/callback`;
-      const scope = "https://www.googleapis.com/auth/calendar";
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
+      // Redirect URI fixa em PUBLIC_BASE_URL (evita redirect_uri_mismatch atras do reverse proxy)
+      const url = buildGoogleCalendarAuthUrl(clientId, getGoogleCalendarRedirectUri());
       return { url, configured: true };
     }),
     disconnect: protectedProcedure.mutation(async () => {
