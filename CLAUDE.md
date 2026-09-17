@@ -18,9 +18,12 @@ React 19 + Vite 7 + Tailwind 4 (client/) · Express 4 + tRPC 11 (server/) · MyS
   GOOGLE_CALENDAR_CLIENT_ID/SECRET; reescrito como teste puro no Gate 1).
 
 ## Variáveis de ambiente (ver `.env.example`)
-Obrigatórias: `DATABASE_URL`, `JWT_SECRET`, `PUBLIC_BASE_URL` (origem pública, sem barra final; monta a
-redirect URI do Google Calendar). E-mail: `SMTP_HOST/PORT/USER/PASS/FROM`, `NOTIFY_EMAIL_TO` (lista
-separada por vírgula). Opcionais: `GOOGLE_CALENDAR_CLIENT_ID/SECRET`, `PIPEDRIVE_API_TOKEN/DOMAIN`, `PORT`.
+Obrigatórias: `DATABASE_URL`, `JWT_SECRET` (mínimo 32 caracteres), `PUBLIC_BASE_URL` (origem pública, sem
+barra final; monta a redirect URI do Google Calendar). Em `NODE_ENV=production` o boot encerra com exit 1
+se `DATABASE_URL` ou `JWT_SECRET` faltarem/forem inválidos (`server/_core/bootChecks.ts`); fora de produção
+só avisa. E-mail: `SMTP_HOST/PORT/USER/PASS/FROM`, `NOTIFY_EMAIL_TO` (lista separada por vírgula).
+Opcionais: `GOOGLE_CALENDAR_CLIENT_ID/SECRET`, `PIPEDRIVE_API_TOKEN/DOMAIN`, `HOST` (default 127.0.0.1),
+`PORT` (default 3000; porta ocupada encerra o processo, não troca de porta — `server/_core/listenConfig.ts`).
 Bootstrap do admin: `ADMIN_EMAIL` + `ADMIN_NOME` só na sessão do shell que roda
 `pnpm tsx scripts/criar-admin.ts` (gera senha temporária aleatória e imprime uma vez; idempotente).
 
@@ -51,7 +54,22 @@ lead_status_history · lead_imports · site_settings (inclui googleCalendarRefre
    vite-plugin-manus-runtime, jsx-loc removidas.
 7. Banco no TiDB da Manus → exportar e importar no MySQL da VPS (Gate 2).
 
-## Backlog (observado no Gate 1, fora de escopo — decidir depois)
+## Gate 2 — patch pré-staging (feito, branch gate2-pre-staging)
+1. Servidor escuta em `HOST` (default 127.0.0.1) — antes escutava em todas as interfaces.
+2. Porta ocupada (EADDRINUSE) encerra o processo — antes procurava outra porta silenciosamente.
+3. Callback do Google Calendar não loga mais o JSON com access/refresh token (só status + booleano).
+4. Boot em produção falha sem `DATABASE_URL` ou `JWT_SECRET` (≥ 32 chars); nomes no log, nunca valores.
+
+## Backlog (observado nos Gates 1 e 2, fora de escopo — decidir depois)
+- **Prioritário antes do cutover**: `settings.getAdmin` devolve todas as `site_settings` em claro, inclusive
+  `googleCalendarRefreshToken`, a qualquer usuário logado (`protectedProcedure`). Filtrar chaves sensíveis
+  ou restringir a admin.
+- `setupVite` é importado estaticamente em `server/_core/vite.ts` → `dist/index.js` importa `vite`,
+  `@vitejs/plugin-react` e `@tailwindcss/vite` (devDependencies). Trocar por `import()` dinâmico só em
+  development para permitir `pnpm install --prod` na VPS. Até lá, instalar com devDependencies.
+- Callback `/api/google-calendar/callback` é público e sem parâmetro `state`/CSRF.
+- Token do Pipedrive vai na query string (`?api_token=`) em `leads.create` → aparece em logs de proxy.
+  Mover para header `x-api-token`.
 - `settings.update` é `protectedProcedure`: qualquer usuário logado altera settings, inclusive apaga o
   refresh token do Calendar. Candidato a `adminProcedure`.
 - `localUsers.resetPassword` (admin) zera `mustChangePassword`; o usuário não é forçado a trocar a senha
