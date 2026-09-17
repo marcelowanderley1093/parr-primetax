@@ -43,7 +43,8 @@ async function startServer() {
         }),
       });
       const tokenData = await tokenRes.json();
-      console.log('[Google Calendar] Token exchange response:', JSON.stringify(tokenData));
+      // Nunca logar o corpo: contem access_token/refresh_token
+      console.log(`[Google Calendar] Token exchange: HTTP ${tokenRes.status}, refresh_token=${Boolean(tokenData?.refresh_token)}`);
       if (tokenData.refresh_token) {
         const { setSetting } = await import("../db");
         await setSetting("googleCalendarRefreshToken", tokenData.refresh_token);
