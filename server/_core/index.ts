@@ -1,31 +1,13 @@
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
-import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { GOOGLE_CALENDAR_CALLBACK_PATH } from "../googleCalendar";
-
-function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const server = net.createServer();
-    server.listen(port, () => {
-      server.close(() => resolve(true));
-    });
-    server.on("error", () => resolve(false));
-  });
-}
-
-async function findAvailablePort(startPort: number = 3000): Promise<number> {
-  for (let port = startPort; port < startPort + 20; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-  }
-  throw new Error(`No available port found starting from ${startPort}`);
-}
+import { resolveListenConfig } from "./listenConfig";
+import { formatBootProblems, validateBootEnv } from "./bootChecks";
 
 async function startServer() {
   const app = express();
@@ -62,7 +44,8 @@ async function startServer() {
         }),
       });
       const tokenData = await tokenRes.json();
-      console.log('[Google Calendar] Token exchange response:', JSON.stringify(tokenData));
+      // Nunca logar o corpo: contem access_token/refresh_token
+      console.log(`[Google Calendar] Token exchange: HTTP ${tokenRes.status}, refresh_token=${Boolean(tokenData?.refresh_token)}`);
       if (tokenData.refresh_token) {
         const { setSetting } = await import("../db");
         await setSetting("googleCalendarRefreshToken", tokenData.refresh_token);
@@ -102,15 +85,31 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
-
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  // Configuracao essencial: em producao, ausencia derruba o boot (so nomes, nunca valores)
+  const bootProblems = validateBootEnv(process.env);
+  if (bootProblems.length > 0) {
+    if (process.env.NODE_ENV === "production") {
+      console.error(`[Boot] Configuracao invalida: ${formatBootProblems(bootProblems)}. Encerrando.`);
+      process.exit(1);
+    }
+    console.warn(`[Boot] Configuracao incompleta: ${formatBootProblems(bootProblems)}`);
   }
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  const { host, port } = resolveListenConfig(process.env);
+
+  // Porta ocupada (ou qualquer erro de bind) encerra o processo: nunca trocar de porta
+  // silenciosamente atras do nginx/systemd.
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`[Server] Porta em uso: ${host}:${port}. Encerrando.`);
+    } else {
+      console.error(`[Server] Falha ao escutar em ${host}:${port}: ${error.code ?? error.message}. Encerrando.`);
+    }
+    process.exit(1);
+  });
+
+  server.listen(port, host, () => {
+    console.log(`Server running on http://${host}:${port}/`);
   });
 }
 
