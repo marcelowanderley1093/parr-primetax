@@ -19,7 +19,7 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
 
   // Don't redirect if already on login, landing page, or public routes
   const path = window.location.pathname;
-  if (path === "/" || path === "/login" || path === "/404") return;
+  if (path === "/" || path === "/login" || path === "/ativar-conta" || path === "/404") return;
 
   // Redirect to local login page instead of OAuth
   window.location.href = "/login";

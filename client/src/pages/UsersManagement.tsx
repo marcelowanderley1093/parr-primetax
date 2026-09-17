@@ -15,7 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useState, useCallback } from "react";
-import { UserPlus, Trash2, Key, ToggleLeft, ToggleRight, Shield, User, Loader2, ArrowLeft } from "lucide-react";
+import { UserPlus, Trash2, Key, ToggleLeft, ToggleRight, Shield, User, Loader2, ArrowLeft, MailCheck, Send } from "lucide-react";
 
 // Instead of Dialog modals (which cause removeChild errors with Radix portals),
 // we use inline panels that render in the same DOM tree.
@@ -33,11 +33,11 @@ export default function UsersManagement() {
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [resendingId, setResendingId] = useState<number | null>(null);
 
   // Form state for create
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
-  const [senha, setSenha] = useState("");
   const [role, setRole] = useState<"comercial" | "admin">("comercial");
 
   // Form state for reset password
@@ -46,13 +46,17 @@ export default function UsersManagement() {
   const resetForm = useCallback(() => {
     setNome("");
     setEmail("");
-    setSenha("");
     setRole("comercial");
   }, []);
 
   const createUser = trpc.localUsers.create.useMutation({
-    onSuccess: () => {
-      toast.success("Usuário criado com sucesso!");
+    onSuccess: (data) => {
+      // Falha de e-mail nao desfaz a criacao: avisar e orientar o reenvio
+      if (data.emailSent) {
+        toast.success("Usuário criado! Email de ativação enviado.");
+      } else {
+        toast.warning("Usuário criado, mas o email de ativação não foi enviado. Use \"Reenviar convite\" na lista.");
+      }
       resetForm();
       setViewMode("list");
       utils.localUsers.list.invalidate();
@@ -80,6 +84,22 @@ export default function UsersManagement() {
     onError: (err) => toast.error(err.message),
   });
 
+  const resendActivation = trpc.localUsers.resendActivation.useMutation({
+    onSuccess: (data) => {
+      if (data.emailSent) {
+        toast.success("Email de ativação reenviado!");
+      } else {
+        toast.warning("Não foi possível enviar o email de ativação. Verifique o SMTP e tente novamente.");
+      }
+      setResendingId(null);
+      utils.localUsers.list.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message);
+      setResendingId(null);
+    },
+  });
+
   const resetPassword = trpc.localUsers.resetPassword.useMutation({
     onSuccess: () => {
       toast.success("Senha redefinida com sucesso!");
@@ -92,15 +112,16 @@ export default function UsersManagement() {
   });
 
   const handleCreate = () => {
-    if (!nome || !email || !senha) {
+    if (!nome || !email) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
     }
-    if (senha.length < 6) {
-      toast.error("A senha deve ter no mínimo 6 caracteres");
-      return;
-    }
     createUser.mutate({ nome, email, role });
+  };
+
+  const handleResend = (id: number) => {
+    setResendingId(id);
+    resendActivation.mutate({ id });
   };
 
   const handleResetPassword = () => {
@@ -137,7 +158,7 @@ export default function UsersManagement() {
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">Gerenciar Usuários</h1>
                 <p className="text-muted-foreground mt-1">
-                  Cadastre e gerencie os usuários que terão acesso ao painel administrativo.
+                  Cadastre usuários por convite: eles recebem um email para definir a senha e ativar o acesso.
                 </p>
               </div>
               <Button className="gap-2" onClick={() => setViewMode("create")}>
@@ -174,14 +195,11 @@ export default function UsersManagement() {
                           <div className="flex items-center gap-2">
                             <span className="font-medium">{u.nome}</span>
                             <Badge variant={u.role === "admin" ? "default" : "secondary"} className="text-xs">
-                              {u.role === "admin" ? "Admin" : "Usuário"}
+                              {u.role === "admin" ? "Administrador" : "Comercial"}
                             </Badge>
-                            {!u.active && (
-                              <Badge variant="destructive" className="text-xs">Inativo</Badge>
-                            )}
-                            {u.mustChangePassword === 1 && (
+                            {u.active === 0 && (
                               <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
-                                Senha pendente
+                                Ativação pendente
                               </Badge>
                             )}
                           </div>
@@ -194,6 +212,23 @@ export default function UsersManagement() {
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {/* Resend activation (conta ainda nao ativada) */}
+                        {u.active === 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Reenviar convite de ativação"
+                            disabled={resendingId === u.id}
+                            onClick={() => handleResend(u.id)}
+                          >
+                            {resendingId === u.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4 text-primary" />
+                            )}
+                          </Button>
+                        )}
+
                         {/* Toggle Active */}
                         <Button
                           variant="ghost"
@@ -259,7 +294,7 @@ export default function UsersManagement() {
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">Cadastrar Novo Usuário</h1>
                 <p className="text-muted-foreground mt-1">
-                  Preencha os dados abaixo para criar um novo acesso ao sistema.
+                  O usuário receberá um email com link para definir a senha e ativar a conta (válido por 7 dias).
                 </p>
               </div>
             </div>
@@ -286,19 +321,6 @@ export default function UsersManagement() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="create-senha">Senha Inicial *</Label>
-                  <Input
-                    id="create-senha"
-                    type="password"
-                    value={senha}
-                    onChange={(e) => setSenha(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    O usuário deverá alterar a senha no primeiro acesso.
-                  </p>
-                </div>
-                <div className="space-y-2">
                   <Label>Perfil</Label>
                   <Select value={role} onValueChange={(v) => setRole(v as "comercial" | "admin")}>
                     <SelectTrigger>
@@ -315,9 +337,9 @@ export default function UsersManagement() {
                   <Button variant="outline" onClick={() => { setViewMode("list"); resetForm(); }}>
                     Cancelar
                   </Button>
-                  <Button onClick={handleCreate} disabled={createUser.isPending}>
-                    {createUser.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Cadastrar
+                  <Button onClick={handleCreate} disabled={createUser.isPending} className="gap-2">
+                    {createUser.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MailCheck className="h-4 w-4" />}
+                    Cadastrar e enviar convite
                   </Button>
                 </div>
               </CardContent>
