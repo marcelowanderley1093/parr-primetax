@@ -8,7 +8,7 @@ process.env.JWT_SECRET = "segredo-de-teste-fluxo-login";
 // getLocalUserByEmail compara LOWER(TRIM()), updateLocalUserPassword zera mustChangePassword.
 type LocalUserRow = {
   id: number; nome: string; email: string; passwordHash: string;
-  role: "user" | "admin"; active: number; mustChangePassword: number;
+  role: "comercial" | "admin"; active: number; mustChangePassword: number;
 };
 const localUsers: LocalUserRow[] = [];
 const users = new Map<string, any>();

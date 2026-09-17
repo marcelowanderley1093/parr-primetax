@@ -304,6 +304,28 @@ export async function updateLocalUserPassword(id: number, passwordHash: string) 
   await db.update(localUsers).set({ passwordHash, mustChangePassword: 0 }).where(eq(localUsers.id, id));
 }
 
+export async function setActivationToken(id: number, token: string, expiry: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(localUsers).set({ activationToken: token, activationTokenExpiry: expiry }).where(eq(localUsers.id, id));
+}
+
+export async function getLocalUserByActivationToken(token: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(localUsers).where(eq(localUsers.activationToken, token)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function activateLocalUser(id: number, passwordHash: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(localUsers)
+    .set({ passwordHash, active: 1, mustChangePassword: 0, activationToken: null, activationTokenExpiry: null })
+    .where(eq(localUsers.id, id));
+}
+
 export async function updateLocalUserAdmin(
   id: number,
   data: { nome: string; passwordHash: string; role: "admin"; active: number; mustChangePassword: number }

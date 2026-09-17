@@ -10,6 +10,8 @@ import { ENV } from "./_core/env";
 import { checkRateLimit, rateLimitKey, resetRateLimit } from "./_core/rateLimit";
 import { emailInput } from "./localUsersHelpers";
 import { buildGoogleCalendarAuthUrl, getGoogleCalendarRedirectUri, getPublicBaseUrl } from "./googleCalendar";
+import { sendActivationEmail } from "./_core/activationEmail";
+import { randomBytes } from "node:crypto";
 
 const leadInputSchema = z.object({
   nome: z.string().min(2, "Nome é obrigatório"),
@@ -40,6 +42,15 @@ async function getCalendarAccessToken(): Promise<string | null> {
   });
   const tokenData = await tokenRes.json();
   return tokenData.access_token || null;
+}
+
+// Ativacao de conta por link: token em claro no banco (hash do token esta no backlog)
+const ACTIVATION_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+function newActivationToken(): { token: string; expiry: Date } {
+  return { token: randomBytes(32).toString("hex"), expiry: new Date(Date.now() + ACTIVATION_TOKEN_TTL_MS) };
+}
+function buildActivationLink(token: string): string {
+  return `${getPublicBaseUrl()}/ativar-conta?token=${token}`;
 }
 
 export const appRouter = router({
@@ -440,25 +451,44 @@ export const appRouter = router({
     list: adminProcedure.query(async () => {
       return db.getAllLocalUsers();
     }),
+    // Cria o usuario sem senha e envia o convite de ativacao por e-mail.
+    // Falha no envio nao desfaz a criacao: emailSent=false e o admin pode reenviar.
     create: adminProcedure.input(z.object({
       nome: z.string().min(2),
       email: emailInput,
       role: z.enum(["comercial", "admin"]).default("comercial"),
-      senha: z.string().min(6),
     })).mutation(async ({ input, ctx }) => {
-      const bcrypt = await import("bcryptjs");
       const existing = await db.getLocalUserByEmail(input.email);
       if (existing) throw new TRPCError({ code: "CONFLICT", message: "Email já cadastrado" });
-      const passwordHash = await bcrypt.hash(input.senha, 10);
       const id = await db.createLocalUser({
         nome: input.nome,
         email: input.email,
         role: input.role,
-        passwordHash,
+        passwordHash: null,
+        active: 0,
         mustChangePassword: 1,
         createdBy: ctx.user.id,
       });
-      return { id, success: true };
+      const { token, expiry } = newActivationToken();
+      await db.setActivationToken(id, token, expiry);
+      const emailSent = await sendActivationEmail({
+        to: input.email,
+        nome: input.nome,
+        activationLink: buildActivationLink(token),
+      });
+      return { id, success: true, emailSent };
+    }),
+    resendActivation: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+      const localUser = await db.getLocalUserById(input.id);
+      if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Usuário não encontrado" });
+      const { token, expiry } = newActivationToken();
+      await db.setActivationToken(localUser.id, token, expiry);
+      const emailSent = await sendActivationEmail({
+        to: localUser.email,
+        nome: localUser.nome,
+        activationLink: buildActivationLink(token),
+      });
+      return { success: true, emailSent };
     }),
     delete: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
       await db.deleteLocalUser(input.id);
@@ -546,6 +576,32 @@ export const appRouter = router({
       const newHash = await bcrypt.hash(input.newPassword, 10);
       // updateLocalUserPassword tambem zera mustChangePassword (primeiro acesso concluido)
       await db.updateLocalUserPassword(localUser.id, newHash);
+      return { success: true };
+    }),
+  }),
+
+  // Ativacao de conta por link (publico)
+  activation: router({
+    validate: publicProcedure.input(z.object({ token: z.string().min(1) })).query(async ({ input }) => {
+      const localUser = await db.getLocalUserByActivationToken(input.token);
+      // Token inexistente ou expirado: mesma resposta, sem revelar se existiu
+      if (!localUser || !localUser.activationTokenExpiry || localUser.activationTokenExpiry.getTime() < Date.now()) {
+        return { valid: false as const, email: null, nome: null };
+      }
+      return { valid: true as const, email: localUser.email, nome: localUser.nome };
+    }),
+    activate: publicProcedure.input(z.object({
+      token: z.string().min(1),
+      password: z.string().min(6, "A senha deve ter no mínimo 6 caracteres"),
+    })).mutation(async ({ input }) => {
+      const bcrypt = await import("bcryptjs");
+      const localUser = await db.getLocalUserByActivationToken(input.token);
+      if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Token de ativação inválido" });
+      if (!localUser.activationTokenExpiry || localUser.activationTokenExpiry.getTime() < Date.now()) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Token expirado. Solicite um novo email de ativação ao administrador." });
+      }
+      const passwordHash = await bcrypt.hash(input.password, 10);
+      await db.activateLocalUser(localUser.id, passwordHash);
       return { success: true };
     }),
   }),

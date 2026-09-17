@@ -12,12 +12,17 @@ const CONTENT_MAX_LENGTH = 20000;
 let transporter: Transporter | null = null;
 let transporterKey = "";
 
-export function isNotificationConfigured(): boolean {
+/** SMTP pronto para enviar (sem exigir NOTIFY_EMAIL_TO). */
+export function isSmtpConfigured(): boolean {
   const { host, port, user, pass, from } = ENV.smtp;
-  return Boolean(host && port && user && pass && from && ENV.notifyEmailTo.length > 0);
+  return Boolean(host && port && user && pass && from);
 }
 
-function getTransporter(): Transporter {
+export function isNotificationConfigured(): boolean {
+  return isSmtpConfigured() && ENV.notifyEmailTo.length > 0;
+}
+
+export function getTransporter(): Transporter {
   const { host, port, user, pass } = ENV.smtp;
   const key = `${host}|${port}|${user}`;
   if (!transporter || transporterKey !== key) {

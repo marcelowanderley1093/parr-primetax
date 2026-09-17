@@ -100,7 +100,7 @@ export default function UsersManagement() {
       toast.error("A senha deve ter no mínimo 6 caracteres");
       return;
     }
-    createUser.mutate({ nome, email, senha, role });
+    createUser.mutate({ nome, email, role });
   };
 
   const handleResetPassword = () => {

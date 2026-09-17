@@ -24,6 +24,13 @@ export function validateBootEnv(env: Record<string, string | undefined>): BootPr
     });
   }
 
+  const publicBaseUrl = (env.PUBLIC_BASE_URL ?? "").trim();
+  if (publicBaseUrl === "") {
+    problems.push({ variable: "PUBLIC_BASE_URL", problem: "ausente ou vazia" });
+  } else if (!/^https?:\/\/[^\s/]+/.test(publicBaseUrl)) {
+    problems.push({ variable: "PUBLIC_BASE_URL", problem: "deve comecar com http:// ou https://" });
+  }
+
   return problems;
 }
 
