@@ -1,32 +1,12 @@
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
-import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { GOOGLE_CALENDAR_CALLBACK_PATH } from "../googleCalendar";
 import { resolveListenConfig } from "./listenConfig";
-
-function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const server = net.createServer();
-    server.listen(port, () => {
-      server.close(() => resolve(true));
-    });
-    server.on("error", () => resolve(false));
-  });
-}
-
-async function findAvailablePort(startPort: number = 3000): Promise<number> {
-  for (let port = startPort; port < startPort + 20; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-  }
-  throw new Error(`No available port found starting from ${startPort}`);
-}
 
 async function startServer() {
   const app = express();
@@ -103,12 +83,18 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const { host, port: preferredPort } = resolveListenConfig(process.env);
-  const port = await findAvailablePort(preferredPort);
+  const { host, port } = resolveListenConfig(process.env);
 
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
-  }
+  // Porta ocupada (ou qualquer erro de bind) encerra o processo: nunca trocar de porta
+  // silenciosamente atras do nginx/systemd.
+  server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`[Server] Porta em uso: ${host}:${port}. Encerrando.`);
+    } else {
+      console.error(`[Server] Falha ao escutar em ${host}:${port}: ${error.code ?? error.message}. Encerrando.`);
+    }
+    process.exit(1);
+  });
 
   server.listen(port, host, () => {
     console.log(`Server running on http://${host}:${port}/`);
