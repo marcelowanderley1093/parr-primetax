@@ -38,7 +38,7 @@ export default function UsersManagement() {
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
-  const [role, setRole] = useState<"user" | "admin">("user");
+  const [role, setRole] = useState<"comercial" | "admin">("comercial");
 
   // Form state for reset password
   const [newPassword, setNewPassword] = useState("");
@@ -47,7 +47,7 @@ export default function UsersManagement() {
     setNome("");
     setEmail("");
     setSenha("");
-    setRole("user");
+    setRole("comercial");
   }, []);
 
   const createUser = trpc.localUsers.create.useMutation({
@@ -300,12 +300,12 @@ export default function UsersManagement() {
                 </div>
                 <div className="space-y-2">
                   <Label>Perfil</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as "user" | "admin")}>
+                  <Select value={role} onValueChange={(v) => setRole(v as "comercial" | "admin")}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="user">Usuário</SelectItem>
+                      <SelectItem value="comercial">Comercial</SelectItem>
                       <SelectItem value="admin">Administrador</SelectItem>
                     </SelectContent>
                   </Select>

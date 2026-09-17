@@ -443,7 +443,7 @@ export const appRouter = router({
     create: adminProcedure.input(z.object({
       nome: z.string().min(2),
       email: emailInput,
-      role: z.enum(["user", "admin"]).default("user"),
+      role: z.enum(["comercial", "admin"]).default("comercial"),
       senha: z.string().min(6),
     })).mutation(async ({ input, ctx }) => {
       const bcrypt = await import("bcryptjs");
@@ -494,7 +494,8 @@ export const appRouter = router({
       const localUser = await db.getLocalUserByEmail(input.email);
       if (!localUser) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
       if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
-      const valid = await bcrypt.compare(input.senha, localUser.passwordHash);
+      // Conta sem senha definida (ativacao pendente) nao autentica
+      const valid = localUser.passwordHash ? await bcrypt.compare(input.senha, localUser.passwordHash) : false;
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
       resetRateLimit(limiterKey);
 
@@ -539,7 +540,7 @@ export const appRouter = router({
       const localUser = await db.getLocalUserByEmail(input.email);
       if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Usuário não encontrado" });
       if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
-      const valid = await bcrypt.compare(input.currentPassword, localUser.passwordHash);
+      const valid = localUser.passwordHash ? await bcrypt.compare(input.currentPassword, localUser.passwordHash) : false;
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
       resetRateLimit(limiterKey);
       const newHash = await bcrypt.hash(input.newPassword, 10);
