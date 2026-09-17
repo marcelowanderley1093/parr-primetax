@@ -7,6 +7,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { GOOGLE_CALENDAR_CALLBACK_PATH } from "../googleCalendar";
 import { resolveListenConfig } from "./listenConfig";
+import { formatBootProblems, validateBootEnv } from "./bootChecks";
 
 async function startServer() {
   const app = express();
@@ -82,6 +83,16 @@ async function startServer() {
     await setupVite(app, server);
   } else {
     serveStatic(app);
+  }
+
+  // Configuracao essencial: em producao, ausencia derruba o boot (so nomes, nunca valores)
+  const bootProblems = validateBootEnv(process.env);
+  if (bootProblems.length > 0) {
+    if (process.env.NODE_ENV === "production") {
+      console.error(`[Boot] Configuracao invalida: ${formatBootProblems(bootProblems)}. Encerrando.`);
+      process.exit(1);
+    }
+    console.warn(`[Boot] Configuracao incompleta: ${formatBootProblems(bootProblems)}`);
   }
 
   const { host, port } = resolveListenConfig(process.env);
