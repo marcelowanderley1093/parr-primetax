@@ -44,6 +44,26 @@ async function getCalendarAccessToken(): Promise<string | null> {
   return tokenData.access_token || null;
 }
 
+// Login/changePassword: todos os caminhos de recusa (e-mail inexistente, conta inativa, hash nulo,
+// senha errada) devolvem o MESMO codigo e mensagem, para nao enumerar contas.
+const LOGIN_ERROR = { code: "UNAUTHORIZED" as const, message: "Email ou senha inválidos" };
+const CHANGE_PASSWORD_ERROR = { code: "UNAUTHORIZED" as const, message: "Senha atual incorreta" };
+// Hash bcrypt fixo (custo 10) de uma senha descartavel. Nao e segredo: serve so para que os caminhos
+// que recusam antes de ter um hash real executem uma comparacao de custo equivalente (oraculo de tempo).
+const DUMMY_BCRYPT_HASH = "$2b$10$YGMvGuLarZXVzQNHIor0W.doKE/N.U5yMPDP.vJWiBjSepO8rWykS";
+
+/** Compara a senha contra o hash da conta; sem hash utilizavel, compara contra o dummy e recusa. */
+async function verifyPassword(
+  bcrypt: typeof import("bcryptjs"),
+  password: string,
+  localUser: { active: number; passwordHash: string | null } | undefined
+): Promise<boolean> {
+  const usable = Boolean(localUser && localUser.active && localUser.passwordHash);
+  const hash = usable ? (localUser!.passwordHash as string) : DUMMY_BCRYPT_HASH;
+  const match = await bcrypt.compare(password, hash);
+  return usable && match;
+}
+
 // Ativacao de conta por link: token em claro no banco (hash do token esta no backlog)
 const ACTIVATION_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 function newActivationToken(): { token: string; expiry: Date } {
@@ -449,7 +469,12 @@ export const appRouter = router({
   // Local Users management (admin creates users with email/password)
   localUsers: router({
     list: adminProcedure.query(async () => {
-      return db.getAllLocalUsers();
+      const rows = await db.getAllLocalUsers();
+      // activationPending: "nunca ativou" = passwordHash IS NULL (0/1 no MySQL -> boolean)
+      return rows.map(({ activationPending, ...rest }) => ({
+        ...rest,
+        activationPending: Boolean(Number(activationPending)),
+      }));
     }),
     // Cria o usuario sem senha e envia o convite de ativacao por e-mail.
     // Falha no envio nao desfaz a criacao: emailSent=false e o admin pode reenviar.
@@ -481,6 +506,10 @@ export const appRouter = router({
     resendActivation: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
       const localUser = await db.getLocalUserById(input.id);
       if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Usuário não encontrado" });
+      // Conta que ja definiu senha nao pode ser "reativada" por link: reverteria uma desativacao
+      if (localUser.passwordHash !== null) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: 'Este usuário já ativou a conta. Use "Redefinir senha".' });
+      }
       const { token, expiry } = newActivationToken();
       await db.setActivationToken(localUser.id, token, expiry);
       const emailSent = await sendActivationEmail({
@@ -522,11 +551,10 @@ export const appRouter = router({
       const limiterKey = rateLimitKey(ctx.req.ip, input.email);
       checkRateLimit(limiterKey);
       const localUser = await db.getLocalUserByEmail(input.email);
-      if (!localUser) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
-      if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
-      // Conta sem senha definida (ativacao pendente) nao autentica
-      const valid = localUser.passwordHash ? await bcrypt.compare(input.senha, localUser.passwordHash) : false;
-      if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email ou senha inválidos" });
+      // Inexistente, inativa (active=0), sem senha (ativacao pendente) ou senha errada: mesma resposta,
+      // e bcrypt.compare roda em todos os caminhos (verifyPassword usa hash dummy quando nao ha hash real)
+      const valid = await verifyPassword(bcrypt, input.senha, localUser);
+      if (!valid || !localUser) throw new TRPCError(LOGIN_ERROR);
       resetRateLimit(limiterKey);
 
       // Create or upsert into the main users table so the session system works
@@ -568,10 +596,9 @@ export const appRouter = router({
       const limiterKey = rateLimitKey(ctx.req.ip, input.email);
       checkRateLimit(limiterKey);
       const localUser = await db.getLocalUserByEmail(input.email);
-      if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Usuário não encontrado" });
-      if (!localUser.active) throw new TRPCError({ code: "FORBIDDEN", message: "Usuário desativado. Contate o administrador." });
-      const valid = localUser.passwordHash ? await bcrypt.compare(input.currentPassword, localUser.passwordHash) : false;
-      if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
+      // Mesma indistinguibilidade do login (endpoint publico)
+      const valid = await verifyPassword(bcrypt, input.currentPassword, localUser);
+      if (!valid || !localUser) throw new TRPCError(CHANGE_PASSWORD_ERROR);
       resetRateLimit(limiterKey);
       const newHash = await bcrypt.hash(input.newPassword, 10);
       // updateLocalUserPassword tambem zera mustChangePassword (primeiro acesso concluido)
@@ -584,8 +611,13 @@ export const appRouter = router({
   activation: router({
     validate: publicProcedure.input(z.object({ token: z.string().min(1) })).query(async ({ input }) => {
       const localUser = await db.getLocalUserByActivationToken(input.token);
-      // Token inexistente ou expirado: mesma resposta, sem revelar se existiu
-      if (!localUser || !localUser.activationTokenExpiry || localUser.activationTokenExpiry.getTime() < Date.now()) {
+      // Token inexistente, expirado ou de conta ja ativada: mesma resposta, sem revelar qual
+      if (
+        !localUser ||
+        localUser.passwordHash !== null ||
+        !localUser.activationTokenExpiry ||
+        localUser.activationTokenExpiry.getTime() < Date.now()
+      ) {
         return { valid: false as const, email: null, nome: null };
       }
       return { valid: true as const, email: localUser.email, nome: localUser.nome };
@@ -596,7 +628,10 @@ export const appRouter = router({
     })).mutation(async ({ input }) => {
       const bcrypt = await import("bcryptjs");
       const localUser = await db.getLocalUserByActivationToken(input.token);
-      if (!localUser) throw new TRPCError({ code: "NOT_FOUND", message: "Token de ativação inválido" });
+      // Conta ja ativada com token antigo ainda vivo: mesmo erro de token inexistente (defesa em profundidade)
+      if (!localUser || localUser.passwordHash !== null) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Token de ativação inválido" });
+      }
       if (!localUser.activationTokenExpiry || localUser.activationTokenExpiry.getTime() < Date.now()) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Token expirado. Solicite um novo email de ativação ao administrador." });
       }

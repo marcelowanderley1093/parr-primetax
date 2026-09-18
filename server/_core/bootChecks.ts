@@ -29,6 +29,9 @@ export function validateBootEnv(env: Record<string, string | undefined>): BootPr
     problems.push({ variable: "PUBLIC_BASE_URL", problem: "ausente ou vazia" });
   } else if (!/^https?:\/\/[^\s/]+/.test(publicBaseUrl)) {
     problems.push({ variable: "PUBLIC_BASE_URL", problem: "deve comecar com http:// ou https://" });
+  } else if (publicBaseUrl.endsWith("/")) {
+    // Rejeitar em vez de normalizar: o operador corrige o env (o link e `${PUBLIC_BASE_URL}/ativar-conta`)
+    problems.push({ variable: "PUBLIC_BASE_URL", problem: "nao pode terminar com barra (/)" });
   }
 
   return problems;

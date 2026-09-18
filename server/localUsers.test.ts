@@ -234,7 +234,7 @@ describe("localAuth.changePassword", () => {
     ).rejects.toThrow();
   });
 
-  it("rejects non-existent user", async () => {
+  it("rejects non-existent user with the same error as a wrong current password", async () => {
     const ctx = createPublicContext();
     const caller = appRouter.createCaller(ctx);
     await expect(
@@ -243,6 +243,6 @@ describe("localAuth.changePassword", () => {
         currentPassword: "123456",
         newPassword: "654321",
       })
-    ).rejects.toThrow(/Usuário não encontrado/);
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
   });
 });

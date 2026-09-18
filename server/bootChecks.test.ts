@@ -40,6 +40,16 @@ describe("validateBootEnv", () => {
     expect(validateBootEnv({ DATABASE_URL: DB_URL, JWT_SECRET: SECRET_OK, PUBLIC_BASE_URL: "http://localhost:3000" })).toEqual([]);
   });
 
+  it("PUBLIC_BASE_URL com barra final -> rejeitada nomeando a barra; sem barra -> aceita", () => {
+    const comBarra = validateBootEnv({ DATABASE_URL: DB_URL, JWT_SECRET: SECRET_OK, PUBLIC_BASE_URL: "https://parr.exemplo.test/" });
+    expect(comBarra).toHaveLength(1);
+    expect(comBarra[0]).toMatchObject({ variable: "PUBLIC_BASE_URL" });
+    expect(comBarra[0].problem).toMatch(/barra/);
+    expect(validateBootEnv({ DATABASE_URL: DB_URL, JWT_SECRET: SECRET_OK, PUBLIC_BASE_URL: "https://parr.exemplo.test//" })[0].problem).toMatch(/barra/);
+    expect(validateBootEnv({ DATABASE_URL: DB_URL, JWT_SECRET: SECRET_OK, PUBLIC_BASE_URL: "https://parr.exemplo.test" })).toEqual([]);
+    expect(validateBootEnv({ DATABASE_URL: DB_URL, JWT_SECRET: SECRET_OK, PUBLIC_BASE_URL: "https://parr.exemplo.test/app" })).toEqual([]);
+  });
+
   it("mensagens nunca contem o valor do segredo nem da URL", () => {
     const secret = "segredo-curto-nao-vazar";
     const url = "mysql://root:senha-super-secreta@db.interno:3306/parr";

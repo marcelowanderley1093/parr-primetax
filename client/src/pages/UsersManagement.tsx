@@ -197,10 +197,14 @@ export default function UsersManagement() {
                             <Badge variant={u.role === "admin" ? "default" : "secondary"} className="text-xs">
                               {u.role === "admin" ? "Administrador" : "Comercial"}
                             </Badge>
-                            {u.active === 0 && (
+                            {/* Mutuamente exclusivas: pendente = nunca definiu senha; inativo = desligado pelo admin */}
+                            {u.activationPending && (
                               <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
                                 Ativação pendente
                               </Badge>
+                            )}
+                            {u.active === 0 && !u.activationPending && (
+                              <Badge variant="destructive" className="text-xs">Inativo</Badge>
                             )}
                           </div>
                           <p className="text-sm text-muted-foreground">{u.email}</p>
@@ -212,8 +216,8 @@ export default function UsersManagement() {
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {/* Resend activation (conta ainda nao ativada) */}
-                        {u.active === 0 && (
+                        {/* Resend activation (conta que nunca definiu senha) */}
+                        {u.activationPending && (
                           <Button
                             variant="ghost"
                             size="icon"

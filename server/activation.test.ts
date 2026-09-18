@@ -15,6 +15,14 @@ let nextId = 1;
 vi.mock("./db", () => ({
   getLocalUserByEmail: vi.fn(async (email: string) => rows.find(r => r.email === email.trim().toLowerCase())),
   getLocalUserById: vi.fn(async (id: number) => rows.find(r => r.id === id)),
+  // Imita o select de db.ts: 8 colunas + activationPending como 0/1 (passwordHash IS NULL), sem o hash
+  getAllLocalUsers: vi.fn(async () =>
+    rows.map(r => ({
+      id: r.id, nome: r.nome, email: r.email, role: r.role, active: r.active,
+      mustChangePassword: r.mustChangePassword, activationPending: r.passwordHash === null ? 1 : 0,
+      createdAt: new Date(), lastSignedIn: null,
+    }))
+  ),
   createLocalUser: vi.fn(async (data: any) => {
     const row: Row = { id: nextId++, activationToken: null, activationTokenExpiry: null, ...data };
     rows.push(row);
@@ -95,7 +103,7 @@ describe("localUsers.create (convite)", () => {
     await expect(asPublic().localUsers.create({ nome: "X Y", email: "z@y.com" })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("resendActivation gera novo token e novo envio", async () => {
+  it("resendActivation em conta sem hash gera novo token e novo envio", async () => {
     await asAdmin().localUsers.create({ nome: "Caio", email: "caio@primetax.com.br" });
     const first = rows[0].activationToken;
     sendActivationEmail.mockResolvedValue(false);
@@ -104,6 +112,43 @@ describe("localUsers.create (convite)", () => {
     expect(rows[0].activationToken).not.toBe(first);
     expect(sendActivationEmail).toHaveBeenCalledTimes(2);
     await expect(asAdmin().localUsers.resendActivation({ id: 42 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("resendActivation em conta com hash (ja ativou) -> BAD_REQUEST, sem novo token nem e-mail", async () => {
+    await asAdmin().localUsers.create({ nome: "Dora", email: "dora@primetax.com.br" });
+    rows[0].passwordHash = await bcrypt.hash("senha-ja-definida", 4);
+    rows[0].active = 0; // desativada pelo admin depois de ativar
+    const tokenBefore = rows[0].activationToken;
+    sendActivationEmail.mockClear();
+    await expect(asAdmin().localUsers.resendActivation({ id: 1 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: 'Este usuário já ativou a conta. Use "Redefinir senha".',
+    });
+    expect(rows[0].activationToken).toBe(tokenBefore);
+    expect(sendActivationEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("localUsers.list x activationPending", () => {
+  it("nenhum item traz passwordHash; pendente = hash nulo; desativada-com-hash nao e pendente", async () => {
+    await asAdmin().localUsers.create({ nome: "Nunca Ativou", email: "nunca@primetax.com.br" });
+    await asAdmin().localUsers.create({ nome: "Ativou e Foi Desligado", email: "desligado@primetax.com.br" });
+    rows[1].passwordHash = await bcrypt.hash("senha", 4);
+    rows[1].active = 0;
+    await asAdmin().localUsers.create({ nome: "Ativo Normal", email: "ativo@primetax.com.br" });
+    rows[2].passwordHash = await bcrypt.hash("senha", 4);
+    rows[2].active = 1;
+
+    const list = await asAdmin().localUsers.list();
+    expect(list).toHaveLength(3);
+    for (const item of list) {
+      expect(item).not.toHaveProperty("passwordHash");
+      expect(typeof item.activationPending).toBe("boolean");
+    }
+    const byEmail = Object.fromEntries(list.map(u => [u.email, u]));
+    expect(byEmail["nunca@primetax.com.br"]).toMatchObject({ active: 0, activationPending: true });
+    expect(byEmail["desligado@primetax.com.br"]).toMatchObject({ active: 0, activationPending: false });
+    expect(byEmail["ativo@primetax.com.br"]).toMatchObject({ active: 1, activationPending: false });
   });
 });
 
@@ -144,6 +189,20 @@ describe("activation.activate / validate", () => {
     expect(row.activationTokenExpiry).toBeNull();
     expect(row.passwordHash).not.toBeNull();
     expect(await bcrypt.compare("senha-forte-1", row.passwordHash!)).toBe(true);
+  });
+
+  it("token de conta que ja tem hash (token antigo vivo) -> mesmo erro de token invalido; validate -> valid:false", async () => {
+    const token = await seedInvited();
+    rows[0].passwordHash = await bcrypt.hash("ja-definida", 4);
+    rows[0].active = 0; // desativada; um clique em reenviar nao existe mais, mas o token antigo continua no banco
+    const inexistente = await asPublic().activation.activate({ token: "nao-existe", password: "senha123" }).catch(e => e);
+    const jaAtiva = await asPublic().activation.activate({ token, password: "senha123" }).catch(e => e);
+    expect(jaAtiva.code).toBe(inexistente.code);
+    expect(jaAtiva.message).toBe(inexistente.message);
+    expect(jaAtiva.code).toBe("NOT_FOUND");
+    expect(rows[0].active).toBe(0);
+    expect(await bcrypt.compare("ja-definida", rows[0].passwordHash!)).toBe(true);
+    expect(await asPublic().activation.validate({ token })).toEqual({ valid: false, email: null, nome: null });
   });
 
   it("reuso do mesmo token depois da ativacao falha", async () => {

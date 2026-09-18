@@ -293,6 +293,8 @@ export async function getAllLocalUsers() {
     role: localUsers.role,
     active: localUsers.active,
     mustChangePassword: localUsers.mustChangePassword,
+    // Derivada no banco: o hash nunca sai do select. MySQL devolve 0/1; o router normaliza.
+    activationPending: sql<number>`(${localUsers.passwordHash} IS NULL)`,
     createdAt: localUsers.createdAt,
     lastSignedIn: localUsers.lastSignedIn,
   }).from(localUsers).orderBy(desc(localUsers.createdAt));

@@ -90,12 +90,13 @@ describe("fluxo de primeiro acesso", () => {
     expect(r.success).toBe(true);
   });
 
-  it("changePassword recusa usuario desativado", async () => {
+  it("changePassword recusa usuario desativado com o mesmo erro de senha errada (sem enumerar)", async () => {
     localUsers[0].active = 0;
     const { caller } = makeCaller();
     await expect(
       caller.localAuth.changePassword({ email: "marcelo@primetax.com.br", currentPassword: "senha-temporaria", newPassword: "nova-senha-123" })
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
+    expect(localUsers[0].mustChangePassword).toBe(1);
   });
 });
 
