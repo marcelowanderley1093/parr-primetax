@@ -166,6 +166,21 @@ function main() {
     console.log(`  ${name} (${list.length} colunas): ${list.join(", ")}`);
   }
   console.log("  legenda: ? = nullable, = tem default");
+
+  // Secao 6: SOMENTE os nomes de chave (settingKey) de site_settings, em ordem alfabetica.
+  // settingValue e qualquer outra coluna nunca sao lidos aqui.
+  console.log("\n=== 6. CHAVES DE site_settings (settingKey, ordem alfabetica) ===");
+  const siteSettings = tables.find(t => t.name === "site_settings");
+  if (!siteSettings) {
+    console.log("  (tabela site_settings nao encontrada)");
+  } else {
+    const keys = siteSettings.rows
+      .map(r => (r && typeof r === "object" && !Array.isArray(r) ? (r as Record<string, unknown>).settingKey : undefined))
+      .filter((k): k is string => typeof k === "string")
+      .sort((a, b) => a.localeCompare(b));
+    for (const k of keys) console.log(`  ${k}`);
+    console.log(`  (${keys.length} chave(s) de ${siteSettings.rows.length} linha(s))`);
+  }
 }
 
 main();
