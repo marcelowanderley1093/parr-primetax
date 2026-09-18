@@ -95,8 +95,7 @@ describe("localUsers.create", () => {
       caller.localUsers.create({
         nome: "Test User",
         email: "test@example.com",
-        senha: "123456",
-        role: "user",
+        role: "comercial",
       })
     ).rejects.toThrow();
   });
@@ -108,8 +107,7 @@ describe("localUsers.create", () => {
       caller.localUsers.create({
         nome: "Test User",
         email: "test@example.com",
-        senha: "123456",
-        role: "user",
+        role: "comercial",
       })
     ).rejects.toThrow();
   });
@@ -121,22 +119,20 @@ describe("localUsers.create", () => {
       caller.localUsers.create({
         nome: "Test User",
         email: "not-an-email",
-        senha: "123456",
-        role: "user",
+        role: "comercial",
       })
     ).rejects.toThrow();
   });
 
-  it("validates minimum password length", async () => {
+  it("rejects role outside comercial/admin (senha nao e mais aceita no create)", async () => {
     const ctx = createAdminContext();
     const caller = appRouter.createCaller(ctx);
     await expect(
       caller.localUsers.create({
         nome: "Test User",
         email: "test@example.com",
-        senha: "12345",
         role: "user",
-      })
+      } as any)
     ).rejects.toThrow();
   });
 
@@ -147,8 +143,7 @@ describe("localUsers.create", () => {
       caller.localUsers.create({
         nome: "A",
         email: "test@example.com",
-        senha: "123456",
-        role: "user",
+        role: "comercial",
       })
     ).rejects.toThrow();
   });
@@ -239,7 +234,7 @@ describe("localAuth.changePassword", () => {
     ).rejects.toThrow();
   });
 
-  it("rejects non-existent user", async () => {
+  it("rejects non-existent user with the same error as a wrong current password", async () => {
     const ctx = createPublicContext();
     const caller = appRouter.createCaller(ctx);
     await expect(
@@ -248,6 +243,6 @@ describe("localAuth.changePassword", () => {
         currentPassword: "123456",
         newPassword: "654321",
       })
-    ).rejects.toThrow(/Usuário não encontrado/);
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
   });
 });

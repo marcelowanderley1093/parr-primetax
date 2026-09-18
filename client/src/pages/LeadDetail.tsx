@@ -22,10 +22,12 @@ import {
   Save,
   X,
   Trash2,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
+import { parseSocios, whatsappDigits } from "@/lib/socios";
 
 function formatCurrency(value: string | null): string {
   if (!value) return "";
@@ -62,6 +64,8 @@ export default function LeadDetail() {
 
   const utils = trpc.useUtils();
   const { data: lead, isLoading: leadLoading } = trpc.leads.getById.useQuery({ id: leadId }, { enabled: !!user && leadId > 0 });
+  // telefoneSocios e somente-leitura: nenhuma rota grava; parser puro em @/lib/socios
+  const socios = parseSocios(lead?.telefoneSocios);
   const { data: notes = [], isLoading: notesLoading } = trpc.leads.getNotes.useQuery({ leadId }, { enabled: !!user && leadId > 0 });
   const { data: history = [], isLoading: historyLoading } = trpc.leads.getHistory.useQuery({ leadId }, { enabled: !!user && leadId > 0 });
 
@@ -263,6 +267,43 @@ export default function LeadDetail() {
                 </div>
               )}
             </div>
+
+            {/* Socios Card (oculto quando nao ha socios validos) */}
+            {socios.length > 0 && (
+              <div className="bg-white rounded-xl border border-border p-6">
+                <h2 className="font-bold text-lg mb-4 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-primary" /> Sócios
+                </h2>
+                <div className="space-y-4">
+                  {socios.map((socio, index) => (
+                    <div key={`${socio.nome}-${index}`} className="border-l-2 border-primary/30 pl-3">
+                      <div className="text-xs text-muted-foreground">Sócio {index + 1}</div>
+                      <div className="font-medium text-sm flex items-center gap-2">
+                        <User className="h-4 w-4 text-muted-foreground" /> {socio.nome}
+                      </div>
+                      {socio.cpf && (
+                        <div className="text-xs text-muted-foreground mt-0.5">CPF: {socio.cpf}</div>
+                      )}
+                      {socio.telefones.length > 0 && (
+                        <div className="mt-1 space-y-1">
+                          {socio.telefones.map((tel) => (
+                            <a
+                              key={tel}
+                              href={`https://wa.me/${whatsappDigits(tel)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 text-sm text-primary hover:underline"
+                            >
+                              <Phone className="h-3.5 w-3.5" /> {tel}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Status Card */}
             <div className="bg-white rounded-xl border border-border p-6">

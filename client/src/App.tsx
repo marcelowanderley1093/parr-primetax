@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import LeadDetail from "./pages/LeadDetail";
 import UsersManagement from "./pages/UsersManagement";
 import LocalLogin from "./pages/LocalLogin";
+import ActivateAccount from "./pages/ActivateAccount";
 
 function Router() {
   return (
@@ -18,6 +19,7 @@ function Router() {
       <Route path="/dashboard/lead/:id" component={LeadDetail} />
       <Route path="/dashboard/users" component={UsersManagement} />
       <Route path="/login" component={LocalLogin} />
+      <Route path="/ativar-conta" component={ActivateAccount} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
