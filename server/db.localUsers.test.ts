@@ -23,9 +23,14 @@ const db = await import("./db");
 beforeEach(() => { calls.set = undefined; calls.where = undefined; });
 
 describe("db.updateLocalUserPassword", () => {
-  it("grava o novo hash e zera mustChangePassword", async () => {
+  it("grava o novo hash e zera mustChangePassword (troca pelo proprio usuario)", async () => {
     await db.updateLocalUserPassword(42, "hash-novo");
     expect(calls.set).toEqual({ passwordHash: "hash-novo", mustChangePassword: 0 });
+  });
+
+  it("com mustChangePassword: 1 (reset pelo admin) grava a flag em 1", async () => {
+    await db.updateLocalUserPassword(42, "hash-admin", { mustChangePassword: 1 });
+    expect(calls.set).toEqual({ passwordHash: "hash-admin", mustChangePassword: 1 });
   });
 });
 

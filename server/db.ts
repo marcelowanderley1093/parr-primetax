@@ -300,10 +300,21 @@ export async function getAllLocalUsers() {
   }).from(localUsers).orderBy(desc(localUsers.createdAt));
 }
 
-export async function updateLocalUserPassword(id: number, passwordHash: string) {
+/**
+ * Grava a nova senha. mustChangePassword: 0 quando o proprio usuario trocou (changePassword),
+ * 1 quando um admin redefiniu (resetPassword) — a senha definida por terceiro e temporaria.
+ */
+export async function updateLocalUserPassword(
+  id: number,
+  passwordHash: string,
+  options: { mustChangePassword: 0 | 1 } = { mustChangePassword: 0 }
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(localUsers).set({ passwordHash, mustChangePassword: 0 }).where(eq(localUsers.id, id));
+  await db
+    .update(localUsers)
+    .set({ passwordHash, mustChangePassword: options.mustChangePassword })
+    .where(eq(localUsers.id, id));
 }
 
 export async function setActivationToken(id: number, token: string, expiry: Date) {

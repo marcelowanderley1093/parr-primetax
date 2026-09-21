@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { clearRateLimits, RATE_LIMIT_MAX_ATTEMPTS } from "./_core/rateLimit";
+import { COOKIE_NAME } from "../shared/const";
 
 process.env.JWT_SECRET = "segredo-de-teste-fluxo-login";
 
@@ -19,10 +20,10 @@ vi.mock("./db", () => ({
     return localUsers.find(u => u.email.trim().toLowerCase() === n);
   }),
   getLocalUserById: vi.fn(async (id: number) => localUsers.find(u => u.id === id)),
-  updateLocalUserPassword: vi.fn(async (id: number, passwordHash: string) => {
+  updateLocalUserPassword: vi.fn(async (id: number, passwordHash: string, options?: { mustChangePassword: 0 | 1 }) => {
     const u = localUsers.find(x => x.id === id)!;
     u.passwordHash = passwordHash;
-    u.mustChangePassword = 0;
+    u.mustChangePassword = options?.mustChangePassword ?? 0;
   }),
   updateLocalUserLastSignedIn: vi.fn(async () => undefined),
   upsertUser: vi.fn(async (u: any) => { users.set(u.openId, { ...(users.get(u.openId) ?? {}), ...u }); }),
@@ -65,6 +66,12 @@ describe("fluxo de primeiro acesso", () => {
     expect(first.mustChangePassword).toBe(true);
     expect(first.user.role).toBe("admin");
     expect(cookies.app_session_id).toBeTypeOf("string");
+    // Com a senha temporária ainda pendente, o cookie NÃO autentica (dashboard direto é bloqueado)
+    {
+      const { sdk } = await import("./_core/sdk");
+      const req = { headers: { cookie: `${COOKIE_NAME}=${cookies.app_session_id}` } } as any;
+      await expect(sdk.authenticateRequest(req)).rejects.toThrow(/Password change required/);
+    }
     // admin de local_users virou admin em `users`
     expect(users.get("local-1").role).toBe("admin");
 
@@ -75,6 +82,11 @@ describe("fluxo de primeiro acesso", () => {
     });
     expect(changed.success).toBe(true);
     expect(localUsers[0].mustChangePassword).toBe(0);
+
+    // O cookie emitido no login só passa a valer depois da troca (flag zerada)
+    const { sdk } = await import("./_core/sdk");
+    const req = { headers: { cookie: `${COOKIE_NAME}=${cookies.app_session_id}` } } as any;
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1", role: "admin" });
 
     const second = await caller.localAuth.login({ email: "marcelo@primetax.com.br", senha: "nova-senha-123" });
     expect(second.mustChangePassword).toBe(false);
@@ -97,6 +109,29 @@ describe("fluxo de primeiro acesso", () => {
       caller.localAuth.changePassword({ email: "marcelo@primetax.com.br", currentPassword: "senha-temporaria", newPassword: "nova-senha-123" })
     ).rejects.toMatchObject({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
     expect(localUsers[0].mustChangePassword).toBe(1);
+  });
+});
+
+describe("reset de senha pelo admin", () => {
+  it("resetPassword grava mustChangePassword=1: a sessao do usuario e bloqueada ate ele trocar a senha", async () => {
+    // usuario ja com senha propria (flag 0) e logado
+    localUsers[0].mustChangePassword = 0;
+    const { caller, cookies } = makeCaller();
+    await caller.localAuth.login({ email: "marcelo@primetax.com.br", senha: "senha-temporaria" });
+    const { sdk } = await import("./_core/sdk");
+    const req = { headers: { cookie: `${COOKIE_NAME}=${cookies.app_session_id}` } } as any;
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1" });
+
+    // admin redefine a senha
+    const admin = appRouter.createCaller({ req: { ip: "9.9.9.9", headers: {} }, res: {}, user: { id: 99, role: "admin", openId: "local-99", name: "Admin" } } as any);
+    await expect(admin.localUsers.resetPassword({ id: 1, newPassword: "definida-pelo-admin" })).resolves.toEqual({ success: true });
+    expect(localUsers[0].mustChangePassword).toBe(1);
+    await expect(sdk.authenticateRequest(req)).rejects.toThrow(/Password change required/);
+
+    // usuario troca a senha temporaria e a mesma sessao volta a valer
+    await caller.localAuth.changePassword({ email: "marcelo@primetax.com.br", currentPassword: "definida-pelo-admin", newPassword: "minha-senha-nova" });
+    expect(localUsers[0].mustChangePassword).toBe(0);
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1" });
   });
 });
 

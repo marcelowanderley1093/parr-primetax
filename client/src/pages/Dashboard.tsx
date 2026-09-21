@@ -31,6 +31,7 @@ import {
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 type LeadStatus = "novo_lead" | "contato_inicial" | "reuniao_agendada" | "proposta_enviada";
 
@@ -276,8 +277,11 @@ function KanbanTab() {
 // ==================== CALENDAR TAB ====================
 function CalendarTab() {
   const [currentMonth, setCurrentMonth] = useState(() => new Date());
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const { data: calendarData, isLoading } = trpc.leads.getCalendarEvents.useQuery();
-  const { data: authUrl } = trpc.googleCalendar.getAuthUrl.useQuery();
+  // Conectar/desconectar a agenda e acao de admin (procedures adminProcedure)
+  const { data: authUrl } = trpc.googleCalendar.getAuthUrl.useQuery(undefined, { enabled: isAdmin });
   const disconnect = trpc.googleCalendar.disconnect.useMutation({
     onSuccess: () => {
       toast.success("Google Calendar desconectado.");
@@ -330,7 +334,11 @@ function CalendarTab() {
           <p className="text-muted-foreground text-sm mb-6">
             Conecte sua conta Google para visualizar e criar eventos diretamente no painel. Os agendamentos de reuniões com clientes serão sincronizados automaticamente.
           </p>
-          {authUrl?.url ? (
+          {!isAdmin ? (
+            <p className="text-sm text-muted-foreground">
+              A conexão com o Google Calendar é feita por um administrador.
+            </p>
+          ) : authUrl?.url ? (
             <Button onClick={() => window.location.href = authUrl.url!} className="gap-2">
               <Link2 className="h-4 w-4" /> Conectar Google Calendar
             </Button>
@@ -363,9 +371,11 @@ function CalendarTab() {
           <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
             <Check className="h-3.5 w-3.5" /> Conectado
           </div>
-          <Button variant="outline" size="sm" onClick={() => disconnect.mutate()} className="text-destructive hover:text-destructive">
-            <Unlink className="h-4 w-4 mr-1" /> Desconectar
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" size="sm" onClick={() => disconnect.mutate()} className="text-destructive hover:text-destructive">
+              <Unlink className="h-4 w-4 mr-1" /> Desconectar
+            </Button>
+          )}
         </div>
       </div>
 
@@ -813,7 +823,7 @@ function SettingsTab() {
             <CalendarIcon className="h-5 w-5 text-primary" />
             <h4 className="font-semibold">Google Calendar</h4>
           </div>
-          {settings?.googleCalendarRefreshToken ? (
+          {settings?.googleCalendarConnected ? (
             <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-4 py-3 rounded-lg border border-green-200">
               <Check className="h-4 w-4" />
               <span>Conectado {settings?.googleCalendarEmail ? `(${settings.googleCalendarEmail})` : ""}</span>
@@ -833,6 +843,8 @@ function SettingsTab() {
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("kanban");
   const searchString = useSearch();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   useEffect(() => {
     if (searchString.includes("calendar=connected")) {
@@ -843,12 +855,14 @@ export default function Dashboard() {
     }
   }, [searchString]);
 
-  const tabs: { id: DashboardTab; label: string; icon: React.ElementType }[] = [
+  // Importar e Configuracoes: so admin (as procedures por tras sao adminProcedure)
+  const allTabs: { id: DashboardTab; label: string; icon: React.ElementType; adminOnly?: boolean }[] = [
     { id: "kanban", label: "Clientes", icon: Users },
     { id: "calendar", label: "Calendário", icon: CalendarIcon },
-    { id: "import", label: "Importar", icon: FileSpreadsheet },
-    { id: "settings", label: "Configurações", icon: Settings },
+    { id: "import", label: "Importar", icon: FileSpreadsheet, adminOnly: true },
+    { id: "settings", label: "Configurações", icon: Settings, adminOnly: true },
   ];
+  const tabs = allTabs.filter(tab => !tab.adminOnly || isAdmin);
 
   return (
     <DashboardLayout>
@@ -873,8 +887,8 @@ export default function Dashboard() {
 
       {activeTab === "kanban" && <KanbanTab />}
       {activeTab === "calendar" && <CalendarTab />}
-      {activeTab === "import" && <ImportTab />}
-      {activeTab === "settings" && <SettingsTab />}
+      {activeTab === "import" && isAdmin && <ImportTab />}
+      {activeTab === "settings" && isAdmin && <SettingsTab />}
     </DashboardLayout>
   );
 }
