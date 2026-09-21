@@ -15,7 +15,13 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
   systemd `parr-staging`, app em `127.0.0.1:3101` atrás do nginx com Basic Auth. Env em `/etc/parr/*.env`
   (nunca lido nem impresso). Banco `parr_staging` com cópia de produção (credenciais e tokens zerados).
 - **`main` é a única fonte de deploy.** Nenhuma outra branch vai para a VPS.
-- **Produção** (parr.primetax.com.br): ainda não existe; cutover pendente (Gate 3). Legado ainda na Manus.
+- **Produção**: https://parr.primetax.com.br — mesma VPS, `/srv/parr/prod`, serviço `parr-prod`,
+  `127.0.0.1:3102`, nginx **sem** Basic Auth (landing pública), banco `parr_prod`, env em
+  `/etc/parr/prod.env` (segredos novos, nunca os do staging). Montagem e operação: `deploy/PRODUCAO.md`.
+  Links públicos (anúncios, bio, WhatsApp, QR) ainda apontam para a Manus até o cutover.
+- **Backup**: `scripts/backup-mysql.sh` via `parr-backup@{staging,prod}.timer` (03:10 UTC, 14 dias,
+  `/var/backups/parr/`, credenciais só em `/etc/parr/backup-<env>.cnf`). Restore e teste: `deploy/RESTORE.md`.
+  Cópia off-VPS: backlog, **obrigatória antes de aposentar a Manus**.
 
 ## Regras absolutas
 1. **Fase 0 read-only**: antes de qualquer alteração, levantar o estado, propor o diff e **parar para
@@ -40,23 +46,28 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 ## Comandos
 - Typecheck: `pnpm check` (= `tsc --noEmit`) · Testes: `pnpm test` (= `vitest run`; inclui
   `server/**/*.test.ts` e `client/src/**/*.test.ts`) · Build: `pnpm build`.
-- Baseline atual (main 22de521): tsc 0 · **123 passed / 0 failed** (17 arquivos) · build ok. Nenhum teste
-  depende de `.env`.
+- Baseline atual: tsc 0 · **151 passed / 0 failed** (20 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
+  Nenhum teste depende de `.env`.
 - Migrações: editar `drizzle/schema.ts` → `pnpm exec drizzle-kit generate --name <descricao>` (exige
   `DATABASE_URL` definida no shell, qualquer valor; não conecta) → conferir o `.sql` gerado. **Nunca editar
-  à mão `drizzle/meta/_journal.json` nem os snapshots; nunca copiar SQL à mão.** Aplicar = `pnpm db:push`
-  (`drizzle-kit migrate`), **só o Marcelo, na VPS, com planejamento**. Exceção histórica, não procedimento:
+  à mão `drizzle/meta/_journal.json` nem os snapshots; nunca copiar SQL à mão.** Aplicar na VPS = **somente
+  `pnpm exec drizzle-kit migrate`** (env do ambiente carregado), só o Marcelo, com planejamento e backup antes.
+  **Nunca `pnpm db:push` nem `drizzle-kit generate` na VPS**: `generate` escreve em `drizzle/` no clone e
+  quebra o gate 2 (working tree limpa) de todo deploy seguinte. Exceção histórica, não procedimento:
   no Gate 2.5 as tags 0006–0008 foram renomeadas no journal para manter paridade com os nomes da Manus.
 - Scripts: `scripts/criar-admin.ts` (bootstrap do admin; `ADMIN_EMAIL`/`ADMIN_NOME` no shell),
   `scripts/sonda-export.ts` (estrutura do export, sem valores), `scripts/import-manus.ts` (import em
-  transação; `--dry-run`/`--apply`), `scripts/deploy-staging.sh` (deploy na VPS).
+  transação; `--mode full|leads`, `--dry-run`/`--apply`; lógica pura em `scripts/lib/importManus.ts`),
+  `scripts/deploy-staging.sh`, `scripts/deploy-prod.sh`, `scripts/backup-mysql.sh`. Units e nginx em `deploy/`.
 
 ## Deploy
-Marcelo roda na VPS, como root: `bash /srv/parr/staging/scripts/deploy-staging.sh`. O script faz
-fetch → checa se o diff toca `drizzle/` (se sim, `PARAR`: migração é manual e planejada) → pull ff-only →
-install frozen → build → restart → smoke (HTTP 200 e `<html lang="pt-BR" translate="no">`), e imprime a
-linha de rollback. **Migração nunca é automática.** Instalar sempre com devDependencies
-(`dist/index.js` importa `vite` estaticamente — backlog).
+Marcelo roda na VPS, como root: `bash /srv/parr/staging/scripts/deploy-staging.sh` (staging) ou
+`bash /srv/parr/prod/scripts/deploy-prod.sh` (produção). Os dois fazem fetch → checam se o diff toca
+`drizzle/` (se sim, `PARAR`: migração é manual e planejada) → pull ff-only → install frozen → build →
+restart → smoke (HTTP 200 e `<html lang="pt-BR" translate="no">`), e imprimem a linha de rollback.
+Em produção o build vai para `dist-next/` e só é trocado por `dist/` depois de conferido (`dist-prev/` =
+rollback rápido); `dist-next/` e `dist-prev/` estão no `.gitignore`. **Migração nunca é automática.**
+Instalar sempre com devDependencies (`dist/index.js` importa `vite` estaticamente — backlog).
 
 ## Armadilhas conhecidas
 - `client/index.html` precisa manter `<html lang="pt-BR" translate="no">` e
@@ -91,8 +102,9 @@ linha de rollback. **Migração nunca é automática.** Instalar sempre com devD
 - Os 5 usuários importados da Manus são todos `admin` (a Manus não tinha o papel `comercial`) — revisar papéis.
 - `activateLocalUser` grava `active=1` incondicionalmente; `resetPassword` do admin anula em silêncio o
   token de convite pendente (e zera `mustChangePassword`).
-- Build no mesmo diretório: se `pnpm build` falhar no meio, `dist/public` fica parcial com o serviço antigo
-  no ar — no script de produção, build em diretório separado e troca no final.
+- Staging faz build no mesmo diretório: se `pnpm build` falhar no meio, `dist/public` fica parcial com o
+  serviço antigo no ar (produção já usa `dist-next/`). Alinhar o staging ao `deploy-prod.sh`.
+- Cópia off-VPS dos backups (rclone/scp) e alerta de falha do timer — **obrigatório antes de aposentar a Manus**.
 - `setupVite` importado estaticamente → `dist/index.js` depende de devDependencies (`vite`,
   `@vitejs/plugin-react`, `@tailwindcss/vite`).
 - Callback do Calendar sem `state`/CSRF; token do Pipedrive na query string (`?api_token=`).
@@ -104,6 +116,8 @@ linha de rollback. **Migração nunca é automática.** Instalar sempre com devD
 ## Roteiro
 - Gates 0–2.5: concluídos (desacoplamento da Manus, patch pré-staging, paridade de schema 0006–0008,
   import do banco).
-- Gate 3 (em andamento): staging no ar; bloqueio de tradução; script de deploy. Pendente: cutover —
-  DNS parr.primetax.com.br, redirect URI de produção no Google Cloud Console, smoke no iPhone,
-  aposentar o manus.space.
+- Gate 3 (em andamento): staging no ar; bloqueio de tradução; deploy scripts; endurecimento
+  (mustChangePassword, papel efetivo, procedures de admin); import só-leads; backup; produção montada em
+  parr.primetax.com.br com links públicos ainda na Manus. Pendente: virada — export final da Manus → import
+  só-leads, convidar equipe, conectar Agenda (redirect URI de produção no Google Cloud Console), smoke no
+  iPhone, trocar links, observar, aposentar o manus.space.

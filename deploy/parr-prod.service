@@ -1,0 +1,29 @@
+# /etc/systemd/system/parr-prod.service
+# Instalar: cp deploy/parr-prod.service /etc/systemd/system/; systemctl daemon-reload; systemctl enable --now parr-prod
+[Unit]
+Description=PARR Primetax (producao) — Express/tRPC em 127.0.0.1:3102
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=parr
+Group=parr
+WorkingDirectory=/srv/parr/prod
+# Segredos so aqui (root:parr 640). Nunca no unit, nunca no repo.
+EnvironmentFile=/etc/parr/prod.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /srv/parr/prod/dist/index.js
+Restart=on-failure
+RestartSec=3
+# Porta ocupada ou env invalida encerram o processo (bootChecks/listenConfig): nao insistir sem limite
+StartLimitIntervalSec=120
+StartLimitBurst=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/srv/parr/prod
+
+[Install]
+WantedBy=multi-user.target
