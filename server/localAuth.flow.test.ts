@@ -20,10 +20,10 @@ vi.mock("./db", () => ({
     return localUsers.find(u => u.email.trim().toLowerCase() === n);
   }),
   getLocalUserById: vi.fn(async (id: number) => localUsers.find(u => u.id === id)),
-  updateLocalUserPassword: vi.fn(async (id: number, passwordHash: string) => {
+  updateLocalUserPassword: vi.fn(async (id: number, passwordHash: string, options?: { mustChangePassword: 0 | 1 }) => {
     const u = localUsers.find(x => x.id === id)!;
     u.passwordHash = passwordHash;
-    u.mustChangePassword = 0;
+    u.mustChangePassword = options?.mustChangePassword ?? 0;
   }),
   updateLocalUserLastSignedIn: vi.fn(async () => undefined),
   upsertUser: vi.fn(async (u: any) => { users.set(u.openId, { ...(users.get(u.openId) ?? {}), ...u }); }),
@@ -109,6 +109,29 @@ describe("fluxo de primeiro acesso", () => {
       caller.localAuth.changePassword({ email: "marcelo@primetax.com.br", currentPassword: "senha-temporaria", newPassword: "nova-senha-123" })
     ).rejects.toMatchObject({ code: "UNAUTHORIZED", message: "Senha atual incorreta" });
     expect(localUsers[0].mustChangePassword).toBe(1);
+  });
+});
+
+describe("reset de senha pelo admin", () => {
+  it("resetPassword grava mustChangePassword=1: a sessao do usuario e bloqueada ate ele trocar a senha", async () => {
+    // usuario ja com senha propria (flag 0) e logado
+    localUsers[0].mustChangePassword = 0;
+    const { caller, cookies } = makeCaller();
+    await caller.localAuth.login({ email: "marcelo@primetax.com.br", senha: "senha-temporaria" });
+    const { sdk } = await import("./_core/sdk");
+    const req = { headers: { cookie: `${COOKIE_NAME}=${cookies.app_session_id}` } } as any;
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1" });
+
+    // admin redefine a senha
+    const admin = appRouter.createCaller({ req: { ip: "9.9.9.9", headers: {} }, res: {}, user: { id: 99, role: "admin", openId: "local-99", name: "Admin" } } as any);
+    await expect(admin.localUsers.resetPassword({ id: 1, newPassword: "definida-pelo-admin" })).resolves.toEqual({ success: true });
+    expect(localUsers[0].mustChangePassword).toBe(1);
+    await expect(sdk.authenticateRequest(req)).rejects.toThrow(/Password change required/);
+
+    // usuario troca a senha temporaria e a mesma sessao volta a valer
+    await caller.localAuth.changePassword({ email: "marcelo@primetax.com.br", currentPassword: "definida-pelo-admin", newPassword: "minha-senha-nova" });
+    expect(localUsers[0].mustChangePassword).toBe(0);
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1" });
   });
 });
 

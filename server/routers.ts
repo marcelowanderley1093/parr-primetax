@@ -543,7 +543,8 @@ export const appRouter = router({
     })).mutation(async ({ input }) => {
       const bcrypt = await import("bcryptjs");
       const hash = await bcrypt.hash(input.newPassword, 10);
-      await db.updateLocalUserPassword(input.id, hash);
+      // Senha definida pelo admin e temporaria: forca a troca na proxima entrada
+      await db.updateLocalUserPassword(input.id, hash, { mustChangePassword: 1 });
       return { success: true };
     }),
   }),
