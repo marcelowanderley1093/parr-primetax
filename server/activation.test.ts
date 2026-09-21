@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import bcrypt from "bcryptjs";
 
 process.env.PUBLIC_BASE_URL = "https://staging.exemplo.test";
+process.env.JWT_SECRET = "segredo-de-teste-ativacao-com-32-chars";
 
 // Banco em memoria com o comportamento das funcoes de db.ts usadas pela ativacao
 type Row = {
@@ -11,8 +12,12 @@ type Row = {
 };
 const rows: Row[] = [];
 let nextId = 1;
+const users = new Map<string, any>();
 
 vi.mock("./db", () => ({
+  getUserByOpenId: vi.fn(async (openId: string) => users.get(openId)),
+  updateLocalUserLastSignedIn: vi.fn(async () => undefined),
+  upsertUser: vi.fn(async (u: any) => { users.set(u.openId, { ...(users.get(u.openId) ?? {}), ...u }); }),
   getLocalUserByEmail: vi.fn(async (email: string) => rows.find(r => r.email === email.trim().toLowerCase())),
   getLocalUserById: vi.fn(async (id: number) => rows.find(r => r.id === id)),
   // Imita o select de db.ts: 8 colunas + activationPending como 0/1 (passwordHash IS NULL), sem o hash
@@ -61,6 +66,7 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 beforeEach(() => {
   rows.length = 0;
   nextId = 1;
+  users.clear();
   sendActivationEmail.mockReset();
   sendActivationEmail.mockResolvedValue(true);
 });
@@ -203,6 +209,20 @@ describe("activation.activate / validate", () => {
     expect(rows[0].active).toBe(0);
     expect(await bcrypt.compare("ja-definida", rows[0].passwordHash!)).toBe(true);
     expect(await asPublic().activation.validate({ token })).toEqual({ valid: false, email: null, nome: null });
+  });
+
+  it("recem-ativado: login emite cookie e authenticateRequest ACEITA (mustChangePassword=0 pos-ativacao)", async () => {
+    const token = await seedInvited();
+    await asPublic().activation.activate({ token, password: "senha-forte-1" });
+    expect(rows[0]).toMatchObject({ active: 1, mustChangePassword: 0 });
+    const cookies: Record<string, string> = {};
+    const ctx = { req: { ip: "1.1.1.1", headers: {}, protocol: "https" }, res: { cookie: (n: string, v: string) => { cookies[n] = v; } }, user: null } as any;
+    const login = await appRouter.createCaller(ctx).localAuth.login({ email: "dani@primetax.com.br", senha: "senha-forte-1" });
+    expect(login.mustChangePassword).toBe(false);
+    const { sdk } = await import("./_core/sdk");
+    const { COOKIE_NAME } = await import("../shared/const");
+    const req = { headers: { cookie: `${COOKIE_NAME}=${cookies[COOKIE_NAME]}` } } as any;
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1", role: "comercial" });
   });
 
   it("reuso do mesmo token depois da ativacao falha", async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { clearRateLimits, RATE_LIMIT_MAX_ATTEMPTS } from "./_core/rateLimit";
+import { COOKIE_NAME } from "../shared/const";
 
 process.env.JWT_SECRET = "segredo-de-teste-fluxo-login";
 
@@ -65,6 +66,12 @@ describe("fluxo de primeiro acesso", () => {
     expect(first.mustChangePassword).toBe(true);
     expect(first.user.role).toBe("admin");
     expect(cookies.app_session_id).toBeTypeOf("string");
+    // Com a senha temporária ainda pendente, o cookie NÃO autentica (dashboard direto é bloqueado)
+    {
+      const { sdk } = await import("./_core/sdk");
+      const req = { headers: { cookie: `${COOKIE_NAME}=${cookies.app_session_id}` } } as any;
+      await expect(sdk.authenticateRequest(req)).rejects.toThrow(/Password change required/);
+    }
     // admin de local_users virou admin em `users`
     expect(users.get("local-1").role).toBe("admin");
 
@@ -75,6 +82,11 @@ describe("fluxo de primeiro acesso", () => {
     });
     expect(changed.success).toBe(true);
     expect(localUsers[0].mustChangePassword).toBe(0);
+
+    // O cookie emitido no login só passa a valer depois da troca (flag zerada)
+    const { sdk } = await import("./_core/sdk");
+    const req = { headers: { cookie: `${COOKIE_NAME}=${cookies.app_session_id}` } } as any;
+    await expect(sdk.authenticateRequest(req)).resolves.toMatchObject({ openId: "local-1", role: "admin" });
 
     const second = await caller.localAuth.login({ email: "marcelo@primetax.com.br", senha: "nova-senha-123" });
     expect(second.mustChangePassword).toBe(false);

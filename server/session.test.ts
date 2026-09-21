@@ -54,7 +54,7 @@ describe("sessão JWT local", () => {
 
   it("authenticateRequest devolve o usuário de `users` quando existe", async () => {
     fakeUsers.set("local-7", { id: 7, openId: "local-7", name: "Marcelo", role: "admin" });
-    fakeLocalUsers.set(7, { id: 7, active: 1 });
+    fakeLocalUsers.set(7, { id: 7, active: 1, mustChangePassword: 0, role: "admin" });
     const token = await sdk.createSessionToken("local-7", { name: "Marcelo" });
     const user = await sdk.authenticateRequest(reqWithCookie(token));
     expect(user.openId).toBe("local-7");
@@ -68,9 +68,19 @@ describe("sessão JWT local", () => {
 
   it("authenticateRequest lança Forbidden quando o local_user foi desativado (sessão ainda válida)", async () => {
     fakeUsers.set("local-8", { id: 8, openId: "local-8", name: "Ex", role: "user" });
-    fakeLocalUsers.set(8, { id: 8, active: 0 });
+    fakeLocalUsers.set(8, { id: 8, active: 0, mustChangePassword: 0, role: "user" });
     const token = await sdk.createSessionToken("local-8", { name: "Ex" });
     await expect(sdk.authenticateRequest(reqWithCookie(token))).rejects.toThrow(/User inactive/);
+  });
+
+  it("authenticateRequest lança Forbidden enquanto mustChangePassword = 1 (senha temporária)", async () => {
+    fakeUsers.set("local-9", { id: 9, openId: "local-9", name: "Temp", role: "admin" });
+    fakeLocalUsers.set(9, { id: 9, active: 1, mustChangePassword: 1, role: "admin" });
+    const token = await sdk.createSessionToken("local-9", { name: "Temp" });
+    await expect(sdk.authenticateRequest(reqWithCookie(token))).rejects.toThrow(/Password change required/);
+    // mesma sessão passa a valer assim que a flag é zerada (changePassword)
+    fakeLocalUsers.set(9, { id: 9, active: 1, mustChangePassword: 0, role: "admin" });
+    await expect(sdk.authenticateRequest(reqWithCookie(token))).resolves.toMatchObject({ openId: "local-9" });
   });
 
   it("authenticateRequest lança Forbidden sem cookie", async () => {

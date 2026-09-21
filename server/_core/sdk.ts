@@ -133,6 +133,11 @@ class SDKServer {
       if (!localUser || !localUser.active) {
         throw ForbiddenError("User inactive");
       }
+      // Senha temporaria pendente: sessao invalida ate changePassword zerar a flag
+      // (o cookie emitido no login passa a valer sozinho depois da troca)
+      if (localUser.mustChangePassword === 1) {
+        throw ForbiddenError("Password change required");
+      }
     }
 
     await db.upsertUser({
