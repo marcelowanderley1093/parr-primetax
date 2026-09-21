@@ -83,6 +83,19 @@ describe("sessão JWT local", () => {
     await expect(sdk.authenticateRequest(reqWithCookie(token))).resolves.toMatchObject({ openId: "local-9" });
   });
 
+  it("authenticateRequest devolve o papel de local_users (efetivo agora) e o grava em users no mesmo upsert", async () => {
+    const { upsertUser } = await import("./db");
+    fakeUsers.set("local-10", { id: 10, openId: "local-10", name: "Rebaixada", role: "admin" });
+    fakeLocalUsers.set(10, { id: 10, active: 1, mustChangePassword: 0, role: "comercial" });
+    const token = await sdk.createSessionToken("local-10", { name: "Rebaixada" });
+    (upsertUser as any).mockClear();
+    const user = await sdk.authenticateRequest(reqWithCookie(token));
+    expect(user.role).toBe("comercial");
+    expect(upsertUser).toHaveBeenCalledTimes(1);
+    expect((upsertUser as any).mock.calls[0][0]).toMatchObject({ openId: "local-10", role: "comercial" });
+    expect((upsertUser as any).mock.calls[0][0].lastSignedIn).toBeInstanceOf(Date);
+  });
+
   it("authenticateRequest lança Forbidden sem cookie", async () => {
     await expect(sdk.authenticateRequest({ headers: {} } as any)).rejects.toThrow(/Invalid session cookie/);
   });

@@ -92,15 +92,22 @@ export const appRouter = router({
         googleCalendarConnected: settings["googleCalendarRefreshToken"] ? true : false,
       };
     }),
-    update: protectedProcedure.input(z.object({
-      key: z.string(),
+    // Admin: so a chave editavel pela tela (nunca o refresh token do Calendar por aqui)
+    update: adminProcedure.input(z.object({
+      key: z.enum(["videoUrl"]),
       value: z.string(),
     })).mutation(async ({ input }) => {
       await db.setSetting(input.key, input.value);
       return { success: true };
     }),
-    getAdmin: protectedProcedure.query(async () => {
-      return db.getAllSettings();
+    // Admin: nunca devolve googleCalendarRefreshToken, so o booleano de conexao
+    getAdmin: adminProcedure.query(async () => {
+      const settings = await db.getAllSettings();
+      return {
+        videoUrl: settings["videoUrl"] || null,
+        googleCalendarConnected: Boolean(settings["googleCalendarRefreshToken"]),
+        googleCalendarEmail: settings["googleCalendarEmail"] || null,
+      };
     }),
   }),
 
@@ -384,7 +391,7 @@ export const appRouter = router({
     }),
 
     // Protected: import leads from Excel data
-    importExcel: protectedProcedure.input(z.object({
+    importExcel: adminProcedure.input(z.object({
       fileName: z.string().optional(),
       sheetName: z.string().optional(),
       leads: z.array(z.object({
@@ -422,12 +429,12 @@ export const appRouter = router({
     }),
 
     // Protected: list import batches
-    listImports: protectedProcedure.query(async () => {
+    listImports: adminProcedure.query(async () => {
       return db.getAllImportBatches();
     }),
 
     // Protected: delete import batch and its leads
-    deleteImport: protectedProcedure.input(z.object({
+    deleteImport: adminProcedure.input(z.object({
       batchId: z.number(),
     })).mutation(async ({ input }) => {
       const deletedCount = await db.deleteImportBatch(input.batchId);
@@ -643,7 +650,7 @@ export const appRouter = router({
 
   // Google Calendar OAuth flow
   googleCalendar: router({
-    getAuthUrl: protectedProcedure.query(async ({ ctx }) => {
+    getAuthUrl: adminProcedure.query(async ({ ctx }) => {
       const clientId = ENV.googleCalendarClientId;
       console.log('[Google Calendar] getAuthUrl called, clientId present:', !!clientId, 'length:', clientId?.length);
       if (!clientId || !getPublicBaseUrl()) return { url: null, configured: false };
@@ -652,7 +659,7 @@ export const appRouter = router({
       const url = buildGoogleCalendarAuthUrl(clientId, getGoogleCalendarRedirectUri());
       return { url, configured: true };
     }),
-    disconnect: protectedProcedure.mutation(async () => {
+    disconnect: adminProcedure.mutation(async () => {
       await db.setSetting("googleCalendarRefreshToken", "");
       await db.setSetting("googleCalendarEmail", "");
       return { success: true };

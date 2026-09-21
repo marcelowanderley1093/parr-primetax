@@ -128,6 +128,7 @@ class SDKServer {
 
     // Usuario local desativado perde a sessao imediatamente (nao so no proximo login)
     const localId = parseLocalOpenId(user.openId);
+    let effectiveRole: User["role"] = user.role;
     if (localId !== null) {
       const localUser = await db.getLocalUserById(localId);
       if (!localUser || !localUser.active) {
@@ -138,14 +139,17 @@ class SDKServer {
       if (localUser.mustChangePassword === 1) {
         throw ForbiddenError("Password change required");
       }
+      // Papel efetivo = local_users.role AGORA; users.role so era sincronizado no login
+      effectiveRole = localUser.role;
     }
 
     await db.upsertUser({
       openId: user.openId,
+      role: effectiveRole,
       lastSignedIn: signedInAt,
     });
 
-    return user;
+    return { ...user, role: effectiveRole };
   }
 }
 
