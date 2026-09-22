@@ -1,0 +1,14 @@
+# /etc/systemd/system/parr-backup@.service — instancia: staging | prod
+# Instalar: cp deploy/parr-backup@.service deploy/parr-backup@.timer /etc/systemd/system/
+#           systemctl daemon-reload; systemctl enable --now parr-backup@prod.timer
+[Unit]
+Description=Backup MySQL do PARR (%i)
+After=mysql.service
+Requires=mysql.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/bash /srv/parr/%i/scripts/backup-mysql.sh %i
+Nice=10
+IOSchedulingClass=idle

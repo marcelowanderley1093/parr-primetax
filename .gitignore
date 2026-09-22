@@ -4,6 +4,9 @@
 
 # Build outputs
 dist/
+# deploy-prod.sh: build em diretorio separado e build anterior para rollback
+dist-next/
+dist-prev/
 build/
 *.dist
 

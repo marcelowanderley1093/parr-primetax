@@ -1,0 +1,11 @@
+# /etc/systemd/system/parr-backup@.timer — diario 03:10 UTC (MySQL da VPS esta em UTC)
+[Unit]
+Description=Timer do backup MySQL do PARR (%i)
+
+[Timer]
+OnCalendar=*-*-* 03:10:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
