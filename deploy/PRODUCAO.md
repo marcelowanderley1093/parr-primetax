@@ -8,7 +8,7 @@ com `printf` em `/etc/parr/` e apagadas com `unset`. Cada etapa termina com um g
 Constantes: diretório `/srv/parr/prod` · usuário `parr` · serviço `parr-prod` · porta `127.0.0.1:3102` ·
 banco `parr_prod` · domínio `parr.primetax.com.br` · branch `main`.
 
-Ordem: §0 → §1 → §2 → §3 → §4 → §5 → §6 → §7 → §9 (ensaio no staging) → §8 (produção) → §10.
+Ordem: §0 → §1 → §2–3 → §4 → §5 → §6 → §7 → §9.0 (levar o export) → §9 (ensaio no staging) → §8 (produção) → §10.
 
 ## 0. Atualizações do sistema (antes de tudo, dentro de `screen`)
 
@@ -63,6 +63,10 @@ Conferência (sem valores) e gate:
 awk -F= '{print $1": "($2==""?"VAZIA":"PREENCHIDA")}' /etc/parr/prod.env
 P=$(stat -c '%a %U:%G' /etc/parr/prod.env); F=$(awk -F= '$2!=""{print $1}' /etc/parr/prod.env | grep -c -E '^(DATABASE_URL|JWT_SECRET|PUBLIC_BASE_URL|SMTP_HOST|SMTP_PORT|SMTP_USER|SMTP_PASS|SMTP_FROM)$'); C=$(grep -c -E '^(NODE_ENV|HOST|PORT|DATABASE_URL|JWT_SECRET|PUBLIC_BASE_URL|SMTP_HOST|SMTP_PORT|SMTP_USER|SMTP_PASS|SMTP_FROM|NOTIFY_EMAIL_TO|GOOGLE_CALENDAR_CLIENT_ID|GOOGLE_CALENDAR_CLIENT_SECRET|PIPEDRIVE_API_TOKEN|PIPEDRIVE_DOMAIN)=' /etc/parr/prod.env); D=$(mysql -N -e "SELECT DEFAULT_CHARACTER_SET_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='parr_prod'"); U=$(mysql -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='parr_prod' AND host='127.0.0.1'"); echo "perm=$P preenchidas_obrigatorias=$F/8 chaves=$C/16 db=$D user=$U"; if [ "$P" = "640 root:parr" ] && [ "$F" -eq 8 ] && [ "$C" -eq 16 ] && [ "$D" = "utf8mb4" ] && [ "$U" = "1" ]; then echo PASSOU; else echo PARAR; fi
 ```
+Nenhuma chave do staging pode faltar na produção (compara **só os nomes**, nunca os valores):
+```
+diff <(grep -oE '^[A-Z_]+=' /etc/parr/staging.env | sort -u) <(grep -oE '^[A-Z_]+=' /etc/parr/prod.env | sort -u) > /tmp/envdiff.txt; F=$(grep -c '^<' /tmp/envdiff.txt); echo "chaves faltando na producao: $F"; grep '^<' /tmp/envdiff.txt | tr -d '<= '; grep '^>' /tmp/envdiff.txt | sed 's/^> /so na producao: /' | tr -d '='; rm -f /tmp/envdiff.txt; if [ "$F" = "0" ]; then echo PASSOU; else echo PARAR; fi
+```
 `NOTIFY_EMAIL_TO`, Calendar e Pipedrive ficam **VAZIAS** por ora (Calendar entra na virada, com a redirect
 URI de produção no Google Cloud Console). `PUBLIC_BASE_URL` sem barra final (o boot rejeita).
 
@@ -116,10 +120,26 @@ bash /srv/parr/prod/scripts/deploy-prod.sh 2>&1 | tee /root/deploy-prod.log
 G=$(grep -c '^PASSOU: gate' /root/deploy-prod.log); H=$(curl -s -o /dev/null -w '%{http_code}' https://parr.primetax.com.br/); T=$(curl -s https://parr.primetax.com.br/ | grep -o -m1 '<html[^>]*>'); echo "gates=$G/10 https=$H tag=$T"; if [ "$G" = "10" ] && [ "$H" = "200" ] && [ "$T" = '<html lang="pt-BR" translate="no">' ]; then echo PASSOU; else echo PARAR; fi
 ```
 Falha no build **não** derruba nada (build em `dist-next/`); o log termina com as duas linhas de rollback.
+Formato conferido no script: `deploy-prod.sh` imprime **10** linhas `PASSOU: gate N: …` (função
+`passou() { echo "PASSOU: $*"; }`, gates 1–10) num deploy com sucesso.
+
+## 9.0. Levar o export para a VPS (no PowerShell do Windows)
+
+O export tem dados pessoais e hashes: salvar **fora** de pastas sincronizadas (Drive/OneDrive) e apagar ao
+fim do §8. No **PowerShell**, na máquina local:
+```
+# salvar o export final da Manus como C:\Users\marce\parr-export.json (nunca em OneDrive/Drive)
+Get-Item C:\Users\marce\parr-export.json | Select-Object FullName, Length, LastWriteTime
+scp C:\Users\marce\parr-export.json parr-vps:/root/parr-export.json
+```
+Gate, **na VPS**:
+```
+ls -la /root/parr-export.json; S=$(stat -c '%s' /root/parr-export.json 2>/dev/null); J=$(head -c 1 /root/parr-export.json); echo "bytes=$S primeiro_char=$J"; if [ "${S:-0}" -gt 100000 ] && [ "$J" = "{" ]; then echo PASSOU; else echo PARAR; fi
+```
 
 ## 9. Ensaio do import só-leads no staging (antes do §8)
 
-Export **final** da Manus copiado para a VPS fora dos clones, legível só pelo `parr`
+Export copiado para fora dos clones, legível só pelo `parr`
 (este arquivo é **reutilizado no §8**; só é apagado ao fim do §8):
 ```
 install -o parr -g parr -m 600 /root/parr-export.json /srv/parr/parr-export.json
@@ -137,7 +157,7 @@ Z=$(mysql parr_staging -N -e "$C" | tr '\n' ' '); echo "depois: $Z"; if [ "$Z" =
 sudo -u parr bash -lc "cd /srv/parr/staging && set -a && . /etc/parr/staging.env && set +a && pnpm tsx scripts/import-manus.ts --file /srv/parr/parr-export.json --mode leads --dry-run" 2>&1 | tee /root/import-staging-dry.log
 tail -1 /root/import-staging-dry.log
 sudo -u parr bash -lc "cd /srv/parr/staging && set -a && . /etc/parr/staging.env && set +a && pnpm tsx scripts/import-manus.ts --file /srv/parr/parr-export.json --mode leads --apply" 2>&1 | tee /root/import-staging-apply.log
-Z=$(mysql parr_staging -N -e "$C" | tr '\n' ' '); L=$(tail -1 /root/import-staging-apply.log); echo "contagens: $Z script: $L"; if [ "$Z" = "0 896 888 1 1 " ] && [ "$L" = "PASSOU" ]; then echo PASSOU; else echo PARAR; fi
+Z=$(mysql parr_staging -N -e "$C" | tr '\n' ' '); L=$(tail -1 /root/import-staging-apply.log); K=$(grep -c '^  COMMIT$' /root/import-staging-apply.log); O=$(grep -c ' -> ok$' /root/import-staging-apply.log); echo "contagens: $Z ultima_linha=$L commit=$K linhas_ok=$O/4"; if [ "$Z" = "0 896 888 1 1 " ] && [ "$L" = "PASSOU" ] && [ "$K" = "1" ] && [ "$O" = "4" ]; then echo PASSOU; else echo PARAR; fi
 ```
 Conferir no painel do staging: 888 leads no Kanban; histórico de um lead com transição mostrando o nome do
 autor (sem `userId`); Configurações com o vídeo. **Não apagar o export aqui.**
@@ -155,19 +175,28 @@ A=$(mysql -N -e "SELECT COUNT(*) FROM parr_prod.local_users WHERE role='admin' A
 **Import** (o mesmo `/srv/parr/parr-export.json` do §9):
 ```
 sudo -u parr bash -lc "cd /srv/parr/prod && set -a && . /etc/parr/prod.env && set +a && pnpm tsx scripts/import-manus.ts --file /srv/parr/parr-export.json --mode leads --dry-run" 2>&1 | tee /root/import-prod-dry.log
-L=$(tail -1 /root/import-prod-dry.log); R=$(grep -c 'ROLLBACK (dry-run)' /root/import-prod-dry.log); Z=$(grep -c 'time_zone: global=+00:00 session=+00:00' /root/import-prod-dry.log); echo "dry=$L rollback=$R tz=$Z"; if [ "$L" = "PASSOU" ] && [ "$R" = "1" ] && [ "$Z" = "1" ]; then echo PASSOU; else echo PARAR; fi
+L=$(tail -1 /root/import-prod-dry.log); R=$(grep -c '^  ROLLBACK (dry-run)$' /root/import-prod-dry.log); Z=$(grep -c 'time_zone: global=+00:00 session=+00:00' /root/import-prod-dry.log); O=$(grep -c ' -> ok$' /root/import-prod-dry.log); echo "ultima_linha=$L rollback=$R tz=$Z linhas_ok=$O/4"; if [ "$L" = "PASSOU" ] && [ "$R" = "1" ] && [ "$Z" = "1" ] && [ "$O" = "4" ]; then echo PASSOU; else echo PARAR; fi
 ```
 Só após o `PASSOU`:
 ```
 sudo -u parr bash -lc "cd /srv/parr/prod && set -a && . /etc/parr/prod.env && set +a && pnpm tsx scripts/import-manus.ts --file /srv/parr/parr-export.json --mode leads --apply" 2>&1 | tee /root/import-prod-apply.log
 C='SELECT COUNT(*) FROM lead_notes UNION ALL SELECT COUNT(*) FROM lead_status_history UNION ALL SELECT COUNT(*) FROM leads UNION ALL SELECT COUNT(*) FROM lead_imports UNION ALL SELECT COUNT(*) FROM site_settings'
-Z=$(mysql parr_prod -N -e "$C" | tr '\n' ' '); L=$(tail -1 /root/import-prod-apply.log); K=$(grep -c '^  COMMIT' /root/import-prod-apply.log); echo "contagens: $Z script: $L commit=$K"; if [ "$Z" = "0 896 888 1 1 " ] && [ "$L" = "PASSOU" ] && [ "$K" = "1" ]; then echo PASSOU; else echo PARAR; fi
+Z=$(mysql parr_prod -N -e "$C" | tr '\n' ' '); L=$(tail -1 /root/import-prod-apply.log); K=$(grep -c '^  COMMIT$' /root/import-prod-apply.log); O=$(grep -c ' -> ok$' /root/import-prod-apply.log); echo "contagens: $Z ultima_linha=$L commit=$K linhas_ok=$O/4"; if [ "$Z" = "0 896 888 1 1 " ] && [ "$L" = "PASSOU" ] && [ "$K" = "1" ] && [ "$O" = "4" ]; then echo PASSOU; else echo PARAR; fi
 ```
-Apagar as **duas** cópias do export (dados pessoais) — só agora, depois do §9 e do §8:
+Apagar as cópias do export (dados pessoais) — só agora, depois do §9 e do §8. **Na VPS**:
 ```
 rm -f /srv/parr/parr-export.json /root/parr-export.json
 ls /srv/parr/parr-export.json /root/parr-export.json 2>/dev/null | wc -l | grep -qx 0 && echo PASSOU || echo PARAR
 ```
+E a cópia local, no **PowerShell** do Windows:
+```
+Remove-Item C:\Users\marce\parr-export.json
+if (Test-Path C:\Users\marce\parr-export.json) { "PARAR" } else { "PASSOU" }
+```
+Formato conferido no script: `import-manus.ts` termina com a linha exata `PASSOU` (ou
+`PARAR: contagem divergente em …`), imprime `  COMMIT` no apply, `  ROLLBACK (dry-run)` no dry-run, a linha
+`modo: leads · time_zone: global=… session=…` e uma linha por tabela terminada em `-> ok` (4 no modo leads).
+
 **Backup**: seguir `deploy/RESTORE.md` (usuário `parr_backup`, `backup-prod.cnf`, timer, **teste de restore** —
 cada passo lá tem o próprio gate).
 

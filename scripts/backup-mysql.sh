@@ -63,6 +63,8 @@ main() {
   passou "gate 3: ${dest} 700 root:root"
 
   # 4. dump (umask 077 -> arquivo nasce 600)
+  # ATENCAO: nome do banco POSICIONAL, nunca --databases/-B/--all-databases. Com aquelas flags o
+  # dump traria CREATE DATABASE/USE e um restore de teste gravaria por cima do banco vivo.
   umask 077
   if ! mysqldump --defaults-extra-file="$cnf" \
       --single-transaction --quick --routines --triggers --events \
@@ -81,17 +83,26 @@ main() {
   if ! zcat "$out" | tail -n 5 | grep -q "Dump completed"; then parar "gate 5: dump sem 'Dump completed' (incompleto)"; fi
   passou "gate 5: ${size} bytes, gzip integro, dump completo"
 
-  # 6. permissoes do arquivo
-  chmod 600 "$out" || parar "gate 6: chmod 600 falhou"
-  if [ "$(stat -c '%a %U:%G' "$out")" != "600 root:root" ]; then parar "gate 6: ${out} nao esta 600 root:root"; fi
-  passou "gate 6: ${out} 600 root:root"
+  # 6. o dump NAO pode conter USE/CREATE DATABASE: o restore sempre vai para o banco escolhido no comando
+  local dbstmts
+  dbstmts="$(zcat "$out" | grep -cE '^(USE |CREATE DATABASE)' || true)"
+  if [ "$dbstmts" != "0" ]; then
+    rm -f "$out"
+    parar "gate 6: dump com ${dbstmts} linha(s) USE/CREATE DATABASE (mysqldump com --databases?); arquivo removido"
+  fi
+  passou "gate 6: dump sem USE/CREATE DATABASE"
 
-  # 7. rotacao
+  # 7. permissoes do arquivo
+  chmod 600 "$out" || parar "gate 7: chmod 600 falhou"
+  if [ "$(stat -c '%a %U:%G' "$out")" != "600 root:root" ]; then parar "gate 7: ${out} nao esta 600 root:root"; fi
+  passou "gate 7: ${out} 600 root:root"
+
+  # 8. rotacao
   local removed
   removed="$(find "$dest" -maxdepth 1 -type f -name "${DB}-*.sql.gz" -mtime "+${KEEP_DAYS}" -print -delete | wc -l)"
   local remaining
   remaining="$(find "$dest" -maxdepth 1 -type f -name "${DB}-*.sql.gz" | wc -l)"
-  passou "gate 7: rotacao ${KEEP_DAYS} dias — removidos ${removed}, restantes ${remaining}"
+  passou "gate 8: rotacao ${KEEP_DAYS} dias — removidos ${removed}, restantes ${remaining}"
 
   echo "=== backup concluido: ${out} ==="
 }
