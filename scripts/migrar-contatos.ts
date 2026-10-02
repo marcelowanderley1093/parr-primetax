@@ -4,18 +4,20 @@
 //   DATABASE_URL vem do ambiente (nunca e impressa). Exige a migracao 0009 aplicada.
 //   --dry-run  roda a transacao inteira (guarda, inserts, recontagem) e termina com ROLLBACK.
 //   --apply    commita.
-//   Guarda: lead_contatos precisa estar VAZIA (impede rodar duas vezes). Nada e apagado ou alterado:
-//   leads.telefoneSocios fica intacto e leads.cpf nao e preenchido.
+//   Guarda: lead_contatos precisa estar VAZIA (impede rodar duas vezes). Nada e apagado:
+//   leads.telefoneSocios fica intacto. leads.cpf so e preenchido quando vazio e o intimado e
+//   inequivoco (ver cpfDoIntimado); leads.updatedAt e preservado (updatedAt = updatedAt).
 //
 // Nunca imprime valores de linha: so contagens. Regras de validacao em scripts/lib/migrarContatos.ts.
 import "dotenv/config";
 import mysql from "mysql2/promise";
 import { drizzle } from "drizzle-orm/mysql2";
-import { sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import * as schema from "../drizzle/schema";
 import {
   MigracaoAbort,
   contatosDoLead,
+  cpfDoIntimado,
   estatisticasVazias,
   parseArgsMigracao,
   type ContatoNovo,
@@ -48,6 +50,9 @@ async function main(): Promise<number> {
   const db = drizzle(conn);
   let finalCount = 0;
   let inserted = 0;
+  let cpfsGravados = 0;
+  let leadsComCpfAntes = 0;
+  let leadsComCpfDepois = 0;
   const stats = estatisticasVazias();
   let totalLeads = 0;
 
@@ -67,11 +72,17 @@ async function main(): Promise<number> {
     // Leitura (so as colunas necessarias)
     totalLeads = await count(conn, "SELECT COUNT(*) AS n FROM `leads`");
     const [rows] = await conn.query(
-      "SELECT id, nome, telefoneSocios FROM `leads` WHERE telefoneSocios IS NOT NULL AND telefoneSocios <> '' ORDER BY id",
+      "SELECT id, nome, telefoneSocios, cpf FROM `leads` WHERE telefoneSocios IS NOT NULL AND telefoneSocios <> '' ORDER BY id",
     );
-    const leads = rows as Array<{ id: number; nome: string; telefoneSocios: string }>;
+    const leads = rows as Array<{ id: number; nome: string; telefoneSocios: string; cpf: string | null }>;
     const contatos: ContatoNovo[] = [];
-    for (const lead of leads) contatos.push(...contatosDoLead(lead, stats));
+    const cpfs: Array<{ id: number; cpf: string }> = [];
+    for (const lead of leads) {
+      contatos.push(...contatosDoLead(lead, stats));
+      const cpf = cpfDoIntimado(lead, stats);
+      if (cpf) cpfs.push({ id: lead.id, cpf });
+    }
+    leadsComCpfAntes = await count(conn, "SELECT COUNT(*) AS n FROM `leads` WHERE cpf IS NOT NULL");
 
     // Transacao unica
     console.log(`--- transacao (${run})`);
@@ -82,8 +93,18 @@ async function main(): Promise<number> {
           await tx.insert(schema.leadContatos).values(batch);
           inserted += batch.length;
         }
+        for (const { id, cpf } of cpfs) {
+          // updatedAt = updatedAt: atribuicao explicita impede o ON UPDATE CURRENT_TIMESTAMP.
+          const res = await tx
+            .update(schema.leads)
+            .set({ cpf, updatedAt: sql`\`updatedAt\`` })
+            .where(and(eq(schema.leads.id, id), isNull(schema.leads.cpf)));
+          cpfsGravados += Number((res as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
+        }
         const r = await tx.execute(sql.raw("SELECT COUNT(*) AS n FROM `lead_contatos`"));
         finalCount = Number((r as unknown as [Array<{ n: number | string }>])[0]?.[0]?.n ?? 0);
+        const c = await tx.execute(sql.raw("SELECT COUNT(*) AS n FROM `leads` WHERE cpf IS NOT NULL"));
+        leadsComCpfDepois = Number((c as unknown as [Array<{ n: number | string }>])[0]?.[0]?.n ?? 0);
         if (run === "dry-run") throw new DryRunRollback();
       });
       console.log("  COMMIT");
@@ -91,7 +112,10 @@ async function main(): Promise<number> {
       if (error instanceof DryRunRollback) console.log("  ROLLBACK (dry-run)");
       else throw error;
     }
-    if (run === "apply") finalCount = await count(conn, "SELECT COUNT(*) AS n FROM `lead_contatos`");
+    if (run === "apply") {
+      finalCount = await count(conn, "SELECT COUNT(*) AS n FROM `lead_contatos`");
+      leadsComCpfDepois = await count(conn, "SELECT COUNT(*) AS n FROM `leads` WHERE cpf IS NOT NULL");
+    }
   } finally {
     await conn.end().catch(() => undefined);
   }
@@ -106,7 +130,12 @@ async function main(): Promise<number> {
   console.log(`CPFs validos: ${stats.cpfsValidos} · CPFs invalidos ignorados: ${stats.cpfsInvalidosZerados}`);
   console.log(`telefones lidos: ${stats.telefonesLidos} · invalidos: ${stats.telefonesInvalidos} · duplicados: ${stats.telefonesDuplicados}`);
   console.log(`contatos gerados: ${stats.contatosGerados} · inseridos: ${inserted} · lead_contatos ${run === "apply" ? "apos COMMIT" : "antes do ROLLBACK"}: ${finalCount}`);
-  if (finalCount === stats.contatosGerados && inserted === stats.contatosGerados) {
+  console.log(`CPF do lead (intimado = unico socio com o mesmo nome do lead):`);
+  console.log(`  a preencher: ${stats.cpfLeadPreenchido} · gravados: ${cpfsGravados} · leads com CPF: ${leadsComCpfAntes} -> ${leadsComCpfDepois}`);
+  console.log(`  nao preenchidos: ja tinham CPF ${stats.cpfLeadJaExistente} · 2+ socios com o mesmo nome ${stats.cpfLeadAmbiguo} · intimado sem CPF valido ${stats.cpfLeadSemCpfValido} · nenhum socio com o nome do lead ${stats.cpfLeadSemSocioComMesmoNome}`);
+  const contatosOk = finalCount === stats.contatosGerados && inserted === stats.contatosGerados;
+  const cpfOk = cpfsGravados === stats.cpfLeadPreenchido && leadsComCpfDepois === leadsComCpfAntes + cpfsGravados;
+  if (contatosOk && cpfOk) {
     console.log("PASSOU");
     return 0;
   }
