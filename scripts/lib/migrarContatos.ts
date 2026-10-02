@@ -5,7 +5,10 @@
 // e descartado aqui, mas CONTADO no relatorio. O JSON original nao e alterado.
 //
 // Decisao 02/10/2026 (Marcelo, opcao "a"): guardar contatos de TODOS os socios do JSON, cada um
-// identificado por pessoaNome/pessoaCpf. leads.cpf NAO e preenchido: o JSON nao diz quem e o intimado.
+// identificado por pessoaNome/pessoaCpf.
+// Decisao 02/10/2026 (apos dry-run no staging: 826 socios com o mesmo nome do lead): leads.cpf e
+// preenchido com o CPF do socio intimado SOMENTE quando exatamente um socio tem o mesmo nome do lead,
+// esse CPF e valido e leads.cpf esta vazio (ver cpfDoIntimado). Nunca sobrescreve.
 
 export type ContatoNovo = {
   leadId: number;
@@ -30,13 +33,19 @@ export type EstatisticasContatos = {
   telefonesInvalidos: number;
   telefonesDuplicados: number; // mesmo numero para a mesma pessoa no mesmo lead
   contatosGerados: number;
+  cpfLeadPreenchido: number; // leads.cpf que serao gravados
+  cpfLeadJaExistente: number; // lead ja tinha CPF: nao mexe
+  cpfLeadAmbiguo: number; // 2+ socios com o mesmo nome do lead
+  cpfLeadSemCpfValido: number; // 1 socio com o mesmo nome, mas sem CPF valido
+  cpfLeadSemSocioComMesmoNome: number;
 };
 
 export function estatisticasVazias(): EstatisticasContatos {
   return {
     leadsComJson: 0, jsonInvalido: 0, sociosLidos: 0, sociosNomeInvalido: 0, sociosSemTelefoneESemCpf: 0,
     sociosSoComCpf: 0, sociosMesmoNomeDoLead: 0, cpfsValidos: 0, cpfsInvalidosZerados: 0, telefonesLidos: 0,
-    telefonesInvalidos: 0, telefonesDuplicados: 0, contatosGerados: 0,
+    telefonesInvalidos: 0, telefonesDuplicados: 0, contatosGerados: 0, cpfLeadPreenchido: 0,
+    cpfLeadJaExistente: 0, cpfLeadAmbiguo: 0, cpfLeadSemCpfValido: 0, cpfLeadSemSocioComMesmoNome: 0,
   };
 }
 
@@ -143,6 +152,53 @@ export function contatosDoLead(
   }
   stats.contatosGerados += out.length;
   return out;
+}
+
+/**
+ * CPF (so digitos) do socio intimado para gravar em leads.cpf, ou null.
+ * Intimado = o UNICO socio do JSON, com nome valido, cujo nome e igual ao do lead (sem acento/caixa/espacos);
+ * entradas repetidas da mesma pessoa (mesmo CPF) contam como uma.
+ * Exige CPF valido e leads.cpf vazio. Qualquer ambiguidade -> null (o comercial preenche).
+ */
+export function cpfDoIntimado(
+  lead: { nome: string; telefoneSocios: string | null; cpf: string | null },
+  stats: EstatisticasContatos,
+): string | null {
+  if (!lead.telefoneSocios) return null;
+  if (lead.cpf) {
+    stats.cpfLeadJaExistente++;
+    return null;
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(lead.telefoneSocios);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data)) return null;
+
+  const candidatos = data
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map(item => ({ nome: asString(item.nome).trim(), cpf: asString(item.cpf).trim() }))
+    .filter(s => isValidName(s.nome) && mesmoNome(s.nome, lead.nome));
+
+  if (candidatos.length === 0) {
+    stats.cpfLeadSemSocioComMesmoNome++;
+    return null;
+  }
+  // A mesma pessoa repetida no JSON (mesmo nome, mesmo CPF) nao e ambiguidade.
+  const cpfs = new Set(candidatos.map(c => (isValidCpf(c.cpf) ? c.cpf.replace(/\D/g, "") : "")));
+  if (cpfs.size > 1) {
+    stats.cpfLeadAmbiguo++;
+    return null;
+  }
+  const [cpf] = Array.from(cpfs);
+  if (!cpf) {
+    stats.cpfLeadSemCpfValido++;
+    return null;
+  }
+  stats.cpfLeadPreenchido++;
+  return cpf;
 }
 
 export class MigracaoAbort extends Error {}

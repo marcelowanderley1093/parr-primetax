@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSocios } from "../../client/src/lib/socios";
 import {
-  MigracaoAbort, contatosDoLead, estatisticasVazias, mesmoNome, normalizarTelefone, parseArgsMigracao,
+  MigracaoAbort, contatosDoLead, cpfDoIntimado, estatisticasVazias, mesmoNome, normalizarTelefone, parseArgsMigracao,
 } from "./migrarContatos";
 
 // Dados 100% sinteticos.
@@ -75,6 +75,55 @@ describe("contatosDoLead", () => {
     expect(contatosDoLead(lead(json([null, 1, "x"])), s)).toEqual([]);
     expect(s.leadsComJson).toBe(3);
     expect(s.jsonInvalido).toBe(2);
+  });
+});
+
+describe("cpfDoIntimado", () => {
+  const l = (socios: unknown, nome = "José da Silva", cpf: string | null = null) => ({ nome, cpf, telefoneSocios: json(socios) });
+  const S = (nome: string, cpf = "", telefones: string[] = []) => ({ nome, cpf, telefones });
+
+  it("unico socio com o mesmo nome (ignorando acento e caixa) e CPF valido -> CPF so digitos", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("JOSE DA SILVA", "123.456.789-09"), S("OUTRO SOCIO", "98765432100")]), s)).toBe("12345678909");
+    expect(s.cpfLeadPreenchido).toBe(1);
+  });
+
+  it("mesma pessoa repetida no JSON (mesmo CPF) nao e ambiguidade", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("JOSE DA SILVA", "12345678909"), S("José da Silva", "123.456.789-09")]), s)).toBe("12345678909");
+  });
+
+  it("dois socios com o mesmo nome e CPFs diferentes -> null (ambiguo)", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("JOSE DA SILVA", "12345678909"), S("JOSE DA SILVA", "98765432100")]), s)).toBeNull();
+    expect(s.cpfLeadAmbiguo).toBe(1);
+  });
+
+  it("intimado sem CPF valido -> null", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("JOSE DA SILVA", "123")]), s)).toBeNull();
+    expect(s.cpfLeadSemCpfValido).toBe(1);
+  });
+
+  it("nenhum socio com o nome do lead -> null (nao chuta pelo unico socio)", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("MARIA SOUZA", "12345678909")]), s)).toBeNull();
+    expect(s.cpfLeadSemSocioComMesmoNome).toBe(1);
+  });
+
+  it("lead que ja tem CPF nunca e sobrescrito", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("JOSE DA SILVA", "12345678909")], "José da Silva", "11122233344"), s)).toBeNull();
+    expect(s.cpfLeadJaExistente).toBe(1);
+    expect(s.cpfLeadPreenchido).toBe(0);
+  });
+
+  it("socio com nome invalido nao conta; JSON nulo ou ruim -> null sem lancar", () => {
+    const s = estatisticasVazias();
+    expect(cpfDoIntimado(l([S("AB", "12345678909")], "AB"), s)).toBeNull();
+    expect(cpfDoIntimado({ nome: "X", cpf: null, telefoneSocios: null }, s)).toBeNull();
+    expect(cpfDoIntimado({ nome: "X", cpf: null, telefoneSocios: "{ruim" }, s)).toBeNull();
+    expect(s.cpfLeadPreenchido).toBe(0);
   });
 });
 
