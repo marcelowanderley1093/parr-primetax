@@ -128,8 +128,9 @@ describe("empresas (router)", () => {
     await expect(appRouter.createCaller(ctx("admin")).empresas.importarCsv(arquivo)).rejects.toThrow("Database not available");
   });
 
-  it("doLead: comercial pode ler; sem banco devolve null", async () => {
-    await expect(appRouter.createCaller(ctx("comercial")).empresas.doLead({ leadId: 1 })).resolves.toBeNull();
+  it("doLead: admin le (sem banco devolve null); comercial so le lead da propria carteira", async () => {
+    await expect(appRouter.createCaller(ctx("admin")).empresas.doLead({ leadId: 1 })).resolves.toBeNull();
+    await expect(appRouter.createCaller(ctx("comercial")).empresas.doLead({ leadId: 1 })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(appRouter.createCaller(ctx(null)).empresas.doLead({ leadId: 1 })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });
