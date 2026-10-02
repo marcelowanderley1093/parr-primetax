@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, bigint, json, index } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, bigint, json, index, uniqueIndex, date } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -47,9 +47,31 @@ export const leads = mysqlTable("leads", {
   empresaId: int("empresaId"),
   // CPF completo do socio intimado, so digitos. Vem de pesquisa manual (nem edital nem EmpresAqui trazem).
   cpf: varchar("cpf", { length: 11 }),
+  // --- Base de editais PGFN (lead = par pessoa + empresa; procedimentos em lead_procedimentos) ---
+  // CPF como publicado no edital ("***.432.***-**"; contribuinte PJ vem com CNPJ). Junto com o nome, identifica a pessoa.
+  cpfParcial: varchar("cpfParcial", { length: 20 }),
+  // Grupo de distribuicao: leads que compartilham pessoa ou empresa vao sempre para o mesmo parceiro.
+  grupoId: int("grupoId"),
+  // Publicacao do edital mais antigo e do mais recente do lead (prazo de impugnacao = ultima + 30 dias corridos).
+  primeiraPublicacao: date("primeiraPublicacao", { mode: "string" }),
+  ultimaPublicacao: date("ultimaPublicacao", { mode: "string" }),
+  // --- Carteira (Fase B): dono do lead = local_users.id (existe desde o convite, antes do 1o login) ---
+  responsavelId: int("responsavelId"),
+  atribuidoEm: timestamp("atribuidoEm"),
+  arquivadoEm: timestamp("arquivadoEm"),
+  arquivadoMotivo: varchar("arquivadoMotivo", { length: 60 }),
+  arquivadoPorId: int("arquivadoPorId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-}, t => [index("leads_empresaId_idx").on(t.empresaId)]);
+}, t => [
+  index("leads_empresaId_idx").on(t.empresaId),
+  index("leads_status_idx").on(t.status),
+  index("leads_responsavelId_idx").on(t.responsavelId),
+  index("leads_grupoId_idx").on(t.grupoId),
+  index("leads_ultimaPublicacao_idx").on(t.ultimaPublicacao),
+  index("leads_cnpj_idx").on(t.cnpj),
+  index("leads_nome_idx").on(t.nome),
+]);
 
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = typeof leads.$inferInsert;
@@ -192,3 +214,36 @@ export const integracaoConsultas = mysqlTable("integracao_consultas", {
 
 export type IntegracaoConsulta = typeof integracaoConsultas.$inferSelect;
 export type InsertIntegracaoConsulta = typeof integracaoConsultas.$inferInsert;
+
+// Editais PGFN de abertura de Procedimento Administrativo de Reconhecimento de Responsabilidade (PARR).
+// Base legal citada nos proprios editais: CTN art. 135, III; Lei 10.522/2002 art. 20-D, III; Portaria PGFN 948/2017.
+export const editais = mysqlTable("editais", {
+  id: int("id").autoincrement().primaryKey(),
+  ano: int("ano").notNull(),
+  numero: varchar("numero", { length: 20 }).notNull(),
+  dataPublicacao: date("dataPublicacao", { mode: "string" }).notNull(),
+  arquivoOrigem: varchar("arquivoOrigem", { length: 255 }),
+  qtdRegistros: int("qtdRegistros").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, t => [uniqueIndex("editais_ano_numero_unique").on(t.ano, t.numero)]);
+
+export type Edital = typeof editais.$inferSelect;
+export type InsertEdital = typeof editais.$inferInsert;
+
+// Um procedimento administrativo por linha do edital. O numero do procedimento e unico: chave de idempotencia
+// da importacao. Um lead (pessoa + empresa) pode ter varios procedimentos, em editais diferentes.
+export const leadProcedimentos = mysqlTable("lead_procedimentos", {
+  id: int("id").autoincrement().primaryKey(),
+  leadId: int("leadId").notNull(),
+  editalId: int("editalId").notNull(),
+  numeroProcedimento: varchar("numeroProcedimento", { length: 20 }).notNull().unique(),
+  cpfParcial: varchar("cpfParcial", { length: 20 }),
+  pagina: int("pagina"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, t => [
+  index("lead_procedimentos_leadId_idx").on(t.leadId),
+  index("lead_procedimentos_editalId_idx").on(t.editalId),
+]);
+
+export type LeadProcedimento = typeof leadProcedimentos.$inferSelect;
+export type InsertLeadProcedimento = typeof leadProcedimentos.$inferInsert;
