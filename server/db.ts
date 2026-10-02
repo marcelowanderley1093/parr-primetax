@@ -1,7 +1,7 @@
-import { eq, desc, inArray, sql } from "drizzle-orm";
+import { eq, desc, asc, inArray, sql, getTableColumns } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers } from "../drizzle/schema";
-import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser } from "../drizzle/schema";
+import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers, leadContatos } from "../drizzle/schema";
+import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser, InsertLeadContato } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -84,10 +84,14 @@ export async function createLead(data: InsertLead) {
   return insertId;
 }
 
+// Kanban: todas as colunas MENOS dados pessoais que a listagem nao usa (CPF do lead e o JSON legado
+// de socios, que traz CPFs). O detalhe (getLeadById) continua trazendo tudo.
+const { cpf: _cpf, telefoneSocios: _telefoneSocios, ...colunasListagem } = getTableColumns(leads);
+
 export async function getAllLeads() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(leads).orderBy(desc(leads.createdAt));
+  return db.select(colunasListagem).from(leads).orderBy(desc(leads.createdAt));
 }
 
 export async function getLeadById(id: number) {
@@ -126,7 +130,7 @@ export async function updateLeadCalendarEvent(id: number, eventId: string) {
   await db.update(leads).set({ calendarEventId: eventId }).where(eq(leads.id, id));
 }
 
-export async function updateLead(id: number, data: Partial<Pick<InsertLead, 'nome' | 'email' | 'telefone' | 'cnpj' | 'devedorPrincipal' | 'valorDivida'>>) {
+export async function updateLead(id: number, data: Partial<Pick<InsertLead, 'nome' | 'email' | 'telefone' | 'cnpj' | 'devedorPrincipal' | 'valorDivida' | 'cpf'>>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(leads).set(data as any).where(eq(leads.id, id));
@@ -138,6 +142,7 @@ export async function deleteLead(id: number): Promise<void> {
   if (!db) throw new Error("Database not available");
   await db.delete(leadNotes).where(eq(leadNotes.leadId, id));
   await db.delete(leadStatusHistory).where(eq(leadStatusHistory.leadId, id));
+  await db.delete(leadContatos).where(eq(leadContatos.leadId, id));
   await db.delete(leads).where(eq(leads.id, id));
 }
 
@@ -154,6 +159,45 @@ export async function createLeadNote(data: InsertLeadNote) {
   if (!db) throw new Error("Database not available");
   const result = await db.insert(leadNotes).values(data);
   return result[0].insertId;
+}
+
+// ==================== LEAD CONTATOS ====================
+
+export async function getLeadContatos(leadId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(leadContatos).where(eq(leadContatos.leadId, leadId)).orderBy(asc(leadContatos.id));
+}
+
+export async function getLeadContatoById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(leadContatos).where(eq(leadContatos.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createLeadContato(data: InsertLeadContato) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(leadContatos).values(data);
+  return result[0].insertId;
+}
+
+export async function updateLeadContato(
+  id: number,
+  data: Partial<Pick<InsertLeadContato, "status" | "observacao" | "valor" | "pessoaNome" | "pessoaCpf" | "atualizadoPorUserId" | "atualizadoPorNome">>,
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(leadContatos).set(data).where(eq(leadContatos.id, id));
+  return { success: true };
+}
+
+export async function deleteLeadContato(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(leadContatos).where(eq(leadContatos.id, id));
+  return { success: true };
 }
 
 // ==================== STATUS HISTORY ====================
@@ -238,6 +282,7 @@ export async function deleteImportBatch(batchId: number): Promise<number> {
     for (const lid of leadIds) {
       await db.delete(leadNotes).where(eq(leadNotes.leadId, lid));
       await db.delete(leadStatusHistory).where(eq(leadStatusHistory.leadId, lid));
+      await db.delete(leadContatos).where(eq(leadContatos.leadId, lid));
     }
     // Delete leads
     await db.delete(leads).where(eq(leads.importBatchId, batchId));
