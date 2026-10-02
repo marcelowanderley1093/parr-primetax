@@ -224,9 +224,27 @@ export const appRouter = router({
       return { id: leadId, success: true };
     }),
 
-    // Protected: list all leads
-    list: protectedProcedure.query(async () => {
-      return db.getAllLeads();
+    // Kanban paginado: uma pagina de uma coluna (substitui a antiga leads.list, que carregava todos os leads).
+    coluna: protectedProcedure.input(z.object({
+      status: z.enum(["novo_lead", "contato_inicial", "reuniao_agendada", "proposta_enviada"]),
+      busca: z.string().max(100).optional(),
+      cursor: z.number().int().min(0).optional(), // offset
+      limite: z.number().int().min(1).max(100).default(50),
+    })).query(async ({ input }) => {
+      const offset = input.cursor ?? 0;
+      const { itens, total } = await db.listarColuna(input.status, input.busca, offset, input.limite);
+      const proximo = offset + itens.length < total ? offset + itens.length : null;
+      return { itens, total, proximo };
+    }),
+
+    // Totais por coluna (cabecalho do Kanban), respeitando a busca.
+    contagem: protectedProcedure.input(z.object({ busca: z.string().max(100).optional() })).query(async ({ input }) => {
+      return db.contarPorStatus(input.busca);
+    }),
+
+    // Editais e procedimentos do lead.
+    procedimentos: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+      return db.getProcedimentosDoLead(input.leadId);
     }),
 
     // Protected: get lead by id

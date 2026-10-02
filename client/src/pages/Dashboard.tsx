@@ -33,9 +33,11 @@ import { useLocation, useSearch } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
 import ImportEmpresaquiSection from "@/components/ImportEmpresaquiSection";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { hojeIso, situacaoPrazo, type SituacaoPrazo } from "@shared/editais";
 
 type LeadStatus = "novo_lead" | "contato_inicial" | "reuniao_agendada" | "proposta_enviada";
 
+// Card do Kanban (vem de leads.coluna, paginado no servidor).
 interface Lead {
   id: number;
   nome: string;
@@ -44,10 +46,11 @@ interface Lead {
   cnpj: string | null;
   devedorPrincipal: string | null;
   valorDivida: string | null;
-  mensagem: string | null;
-  calendarEventId: string | null;
   status: LeadStatus;
   createdAt: Date;
+  ultimaPublicacao: string | null;
+  empresaSituacao: string | null;
+  empresaDividaCentavos: number | null;
 }
 
 function formatCurrency(value: string | null): string {
@@ -60,6 +63,8 @@ function formatCurrency(value: string | null): string {
   return num.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+const brlCentavos = (c: number) => (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
 const STATUS_CONFIG: Record<LeadStatus, { label: string; color: string; bgColor: string; borderColor: string }> = {
   novo_lead: { label: "Novo Lead", color: "text-blue-700", bgColor: "bg-blue-50", borderColor: "border-blue-200" },
   contato_inicial: { label: "Contato Inicial", color: "text-amber-700", bgColor: "bg-amber-50", borderColor: "border-amber-200" },
@@ -69,9 +74,25 @@ const STATUS_CONFIG: Record<LeadStatus, { label: string; color: string; bgColor:
 
 const COLUMN_ORDER: LeadStatus[] = ["novo_lead", "contato_inicial", "reuniao_agendada", "proposta_enviada"];
 
+// Prazo de impugnacao (estimado; ver shared/editais.ts). Vermelho so no critico (ate 3 dias).
+const COR_PRAZO: Record<SituacaoPrazo["nivel"], string> = {
+  critico: "bg-red-50 text-red-700 border-red-200",
+  atencao: "bg-amber-50 text-amber-800 border-amber-200",
+  aberto: "bg-[oklch(0.95_0.03_185)] text-[oklch(0.45_0.1_185)] border-[oklch(0.85_0.05_185)]",
+  encerrado: "bg-muted text-muted-foreground border-border",
+};
+
+const COR_SITUACAO_EMPRESA: Record<string, string> = {
+  ATIVA: "text-green-700",
+  INAPTA: "text-amber-700",
+  SUSPENSA: "text-amber-700",
+  BAIXADA: "text-muted-foreground",
+};
+
 type DashboardTab = "kanban" | "calendar" | "import" | "settings";
 
-function KanbanCard({ lead, onDragStart, onClick, onDelete }: { lead: Lead; onDragStart: (e: React.DragEvent, lead: Lead) => void; onClick: () => void; onDelete: (id: number) => void }) {
+function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead; hoje: string; onDragStart: (e: React.DragEvent, lead: Lead) => void; onClick: () => void; onDelete: (id: number) => void }) {
+  const prazo = situacaoPrazo(lead.ultimaPublicacao, hoje);
   return (
     <div
       draggable
@@ -82,26 +103,30 @@ function KanbanCard({ lead, onDragStart, onClick, onDelete }: { lead: Lead; onDr
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <GripVertical className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
-          <h4 className="font-semibold text-sm text-foreground truncate max-w-[140px]">{lead.nome}</h4>
+          <h4 className="font-semibold text-sm text-foreground truncate max-w-[140px]" title={lead.nome}>{lead.nome}</h4>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={(e) => { e.stopPropagation(); onClick(); }} className="p-1 rounded hover:bg-muted transition-colors" title="Editar">
             <Pencil className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-primary transition-colors" />
           </button>
-          <button onClick={(e) => { e.stopPropagation(); if (confirm('Excluir este cliente?')) onDelete(lead.id); }} className="p-1 rounded hover:bg-red-50 transition-colors" title="Excluir">
+          <button onClick={(e) => { e.stopPropagation(); if (confirm("Excluir este cliente?")) onDelete(lead.id); }} className="p-1 rounded hover:bg-red-50 transition-colors" title="Excluir">
             <Trash2 className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-red-500 transition-colors" />
           </button>
         </div>
       </div>
       <div className="space-y-1.5">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Mail className="h-3 w-3 shrink-0" />
-          <span className="truncate">{lead.email}</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Phone className="h-3 w-3 shrink-0" />
-          <span>{lead.telefone}</span>
-        </div>
+        {lead.email && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Mail className="h-3 w-3 shrink-0" />
+            <span className="truncate">{lead.email}</span>
+          </div>
+        )}
+        {lead.telefone && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Phone className="h-3 w-3 shrink-0" />
+            <span>{lead.telefone}</span>
+          </div>
+        )}
         {lead.cnpj && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="font-medium">CNPJ:</span>
@@ -114,23 +139,43 @@ function KanbanCard({ lead, onDragStart, onClick, onDelete }: { lead: Lead; onDr
             <span className="truncate" title={lead.devedorPrincipal}>{lead.devedorPrincipal}</span>
           </div>
         )}
-        {lead.valorDivida && (
+        {lead.empresaSituacao && (
+          <div className={`text-[11px] font-medium ${COR_SITUACAO_EMPRESA[lead.empresaSituacao] ?? "text-muted-foreground"}`}>
+            Empresa {lead.empresaSituacao.toLowerCase()}
+          </div>
+        )}
+        {lead.empresaDividaCentavos != null ? (
+          <div className="text-xs font-medium text-[oklch(0.62_0.12_185)]">
+            Dívida ativa: {brlCentavos(lead.empresaDividaCentavos)}
+          </div>
+        ) : lead.valorDivida ? (
           <div className="text-xs font-medium text-[oklch(0.62_0.12_185)]">
             Dívida: {formatCurrency(lead.valorDivida)}
+          </div>
+        ) : null}
+        {prazo && (
+          <div className={`text-[11px] px-2 py-0.5 rounded border inline-block ${COR_PRAZO[prazo.nivel]}`} title="Prazo estimado: publicação do edital + 30 dias corridos">
+            {prazo.rotulo}
           </div>
         )}
       </div>
       <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
         <span className="text-[10px] text-muted-foreground">
-          {new Date(lead.createdAt).toLocaleDateString("pt-BR")}
+          {lead.ultimaPublicacao
+            ? `Edital de ${lead.ultimaPublicacao.split("-").reverse().join("/")}`
+            : new Date(lead.createdAt).toLocaleDateString("pt-BR")}
         </span>
       </div>
     </div>
   );
 }
 
-function KanbanColumn({ status, leads, onDragStart, onDrop, onDragOver, onCardClick, onDeleteLead, isDragOver }: {
-  status: LeadStatus; leads: Lead[];
+const TAMANHO_PAGINA = 50;
+
+function KanbanColumn({ status, busca, hoje, onDragStart, onDrop, onDragOver, onCardClick, onDeleteLead, isDragOver }: {
+  status: LeadStatus;
+  busca: string;
+  hoje: string;
   onDragStart: (e: React.DragEvent, lead: Lead) => void;
   onDrop: (e: React.DragEvent, status: LeadStatus) => void;
   onDragOver: (e: React.DragEvent, status: LeadStatus) => void;
@@ -139,6 +184,13 @@ function KanbanColumn({ status, leads, onDragStart, onDrop, onDragOver, onCardCl
   isDragOver: boolean;
 }) {
   const config = STATUS_CONFIG[status];
+  // Paginado no servidor: 50 por vez; "carregar mais" busca a proxima pagina.
+  const q = trpc.leads.coluna.useInfiniteQuery(
+    { status, busca: busca || undefined, limite: TAMANHO_PAGINA },
+    { getNextPageParam: ultima => ultima.proximo ?? undefined, initialCursor: 0 },
+  );
+  const leads = (q.data?.pages.flatMap(p => p.itens) ?? []) as Lead[];
+  const total = q.data?.pages[0]?.total ?? 0;
   return (
     <div
       className={`flex flex-col min-w-[260px] max-w-[320px] flex-1 rounded-xl ${isDragOver ? "ring-2 ring-primary/30" : ""} transition-all`}
@@ -151,17 +203,25 @@ function KanbanColumn({ status, leads, onDragStart, onDrop, onDragOver, onCardCl
           <h3 className={`font-semibold text-sm ${config.color}`}>{config.label}</h3>
         </div>
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${config.bgColor} ${config.color} border ${config.borderColor}`}>
-          {leads.length}
+          {total.toLocaleString("pt-BR")}
         </span>
       </div>
       <div className={`flex-1 p-2 space-y-2 bg-muted/30 rounded-b-xl border border-t-0 ${config.borderColor} min-h-[200px] ${isDragOver ? "bg-primary/5" : ""}`}>
+        {q.isLoading && (
+          <div className="flex items-center justify-center h-24"><RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        )}
         {leads.map((lead) => (
-          <KanbanCard key={lead.id} lead={lead} onDragStart={onDragStart} onClick={() => onCardClick(lead)} onDelete={onDeleteLead} />
+          <KanbanCard key={lead.id} lead={lead} hoje={hoje} onDragStart={onDragStart} onClick={() => onCardClick(lead)} onDelete={onDeleteLead} />
         ))}
-        {leads.length === 0 && (
+        {!q.isLoading && leads.length === 0 && (
           <div className="flex items-center justify-center h-24 text-xs text-muted-foreground/60">
-            Arraste clientes para cá
+            {busca ? "Nenhum cliente encontrado" : "Arraste clientes para cá"}
           </div>
+        )}
+        {q.hasNextPage && (
+          <Button variant="ghost" size="sm" className="w-full text-xs" disabled={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>
+            {q.isFetchingNextPage ? "Carregando…" : `Carregar mais (${leads.length.toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")})`}
+          </Button>
         )}
       </div>
     </div>
@@ -172,21 +232,33 @@ function KanbanColumn({ status, leads, onDragStart, onDrop, onDragOver, onCardCl
 function KanbanTab() {
   const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
+  const [busca, setBusca] = useState(""); // busca efetiva, com atraso para nao consultar a cada tecla
   const [dragOverColumn, setDragOverColumn] = useState<LeadStatus | null>(null);
   const [calendarModalOpen, setCalendarModalOpen] = useState(false);
   const [calendarLeadId, setCalendarLeadId] = useState<number | null>(null);
   const draggedLead = useRef<Lead | null>(null);
+  const hoje = hojeIso();
+
+  useEffect(() => {
+    const t = setTimeout(() => setBusca(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const utils = trpc.useUtils();
-  const { data: leads = [], isLoading } = trpc.leads.list.useQuery();
+  const { data: contagem } = trpc.leads.contagem.useQuery({ busca: busca || undefined });
+  const totalGeral = contagem ? Object.values(contagem).reduce((a, b) => a + b, 0) : 0;
+  const recarregar = useCallback(() => {
+    utils.leads.coluna.invalidate();
+    utils.leads.contagem.invalidate();
+  }, [utils]);
 
   const updateStatus = trpc.leads.updateStatus.useMutation({
-    onSuccess: () => utils.leads.list.invalidate(),
+    onSuccess: recarregar,
   });
 
   const deleteLeadMutation = trpc.leads.delete.useMutation({
     onSuccess: () => {
-      utils.leads.list.invalidate();
+      recarregar();
       toast.success("Lead excluído com sucesso");
     },
     onError: () => toast.error("Erro ao excluir lead"),
@@ -220,53 +292,41 @@ function KanbanTab() {
     draggedLead.current = null;
   }, [updateStatus]);
 
-  const filteredLeads = leads.filter((l: Lead) =>
-    !search || l.nome.toLowerCase().includes(search.toLowerCase()) || l.email.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const getLeadsByStatus = (status: LeadStatus) =>
-    filteredLeads.filter((l: Lead) => l.status === status);
-
   return (
     <div>
       <div className="flex items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-3 flex-1">
-          <div className="relative max-w-xs flex-1">
+          <div className="relative max-w-sm flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Buscar clientes..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9" />
+            <Input placeholder="Buscar por nome, empresa, CNPJ ou nº do procedimento" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9" />
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => utils.leads.list.invalidate()}>
+          <Button variant="outline" size="sm" onClick={recarregar}>
             <RefreshCw className="h-4 w-4 mr-1" /> Atualizar
           </Button>
           <div className="text-sm text-muted-foreground">
-            <span className="font-medium">{leads.length}</span> clientes
+            <span className="font-medium">{totalGeral.toLocaleString("pt-BR")}</span> clientes
           </div>
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center h-64">
-          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {COLUMN_ORDER.map((status) => (
-            <KanbanColumn
-              key={status}
-              status={status}
-              leads={getLeadsByStatus(status)}
-              onDragStart={handleDragStart}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onCardClick={(lead) => setLocation(`/dashboard/lead/${lead.id}`)}
-              onDeleteLead={handleDeleteLead}
-              isDragOver={dragOverColumn === status}
-            />
-          ))}
-        </div>
-      )}
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {COLUMN_ORDER.map((status) => (
+          <KanbanColumn
+            key={status}
+            status={status}
+            busca={busca}
+            hoje={hoje}
+            onDragStart={handleDragStart}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onCardClick={(lead) => setLocation(`/dashboard/lead/${lead.id}`)}
+            onDeleteLead={handleDeleteLead}
+            isDragOver={dragOverColumn === status}
+          />
+        ))}
+      </div>
 
       {calendarModalOpen && calendarLeadId && (
         <CalendarModal leadId={calendarLeadId} onClose={() => { setCalendarModalOpen(false); setCalendarLeadId(null); }} />
@@ -477,7 +537,8 @@ function ImportTab() {
     onSuccess: (data) => {
       toast.success(`Importação excluída! ${data.deletedLeads} clientes removidos.`);
       utils.leads.listImports.invalidate();
-      utils.leads.list.invalidate();
+      utils.leads.coluna.invalidate();
+      utils.leads.contagem.invalidate();
     },
     onError: (err) => toast.error(err.message || "Erro ao excluir importação."),
   });
@@ -492,7 +553,8 @@ function ImportTab() {
       setWorkbookRef(null);
       setMapping({});
       setFileName("");
-      utils.leads.list.invalidate();
+      utils.leads.coluna.invalidate();
+      utils.leads.contagem.invalidate();
       utils.leads.listImports.invalidate();
     },
     onError: (err) => {

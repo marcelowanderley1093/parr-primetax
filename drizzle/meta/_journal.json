@@ -71,6 +71,20 @@
       "when": 1790957362541,
       "tag": "0009_empresaqui_empresas_contatos",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1790972115010,
+      "tag": "0010_editais_procedimentos_carteira",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1790973082745,
+      "tag": "0011_indice_kanban_status_publicacao",
+      "breakpoints": true
     }
   ]
 }

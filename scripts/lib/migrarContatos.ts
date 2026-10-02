@@ -81,7 +81,7 @@ export function normalizarTelefone(tel: string): string {
 
 /** Comparacao de nomes sem acento, caixa e espacos extras. */
 export function mesmoNome(a: string, b: string): boolean {
-  const n = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+  const n = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
   return n(a) !== "" && n(a) === n(b);
 }
 

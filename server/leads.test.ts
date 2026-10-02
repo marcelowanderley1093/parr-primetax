@@ -88,12 +88,21 @@ describe("leads.create", () => {
   });
 });
 
-describe("leads.list", () => {
+describe("leads.coluna / leads.contagem / leads.procedimentos", () => {
   it("requires authentication", async () => {
     const ctx = createPublicContext();
     const caller = appRouter.createCaller(ctx);
 
-    await expect(caller.leads.list()).rejects.toThrow();
+    await expect(caller.leads.coluna({ status: "novo_lead" })).rejects.toThrow();
+    await expect(caller.leads.contagem({})).rejects.toThrow();
+    await expect(caller.leads.procedimentos({ leadId: 1 })).rejects.toThrow();
+  });
+
+  it("rejects unknown status and page size above 100", async () => {
+    const caller = appRouter.createCaller(createAuthContext());
+
+    await expect(caller.leads.coluna({ status: "arquivado" as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(caller.leads.coluna({ status: "novo_lead", limite: 500 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
 
