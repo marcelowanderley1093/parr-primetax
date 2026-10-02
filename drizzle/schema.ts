@@ -249,3 +249,34 @@ export const leadProcedimentos = mysqlTable("lead_procedimentos", {
 
 export type LeadProcedimento = typeof leadProcedimentos.$inferSelect;
 export type InsertLeadProcedimento = typeof leadProcedimentos.$inferInsert;
+
+// Carteira de cada parceiro (Fase B2): filtro salvo para distribuir leads livres. Um registro por parceiro.
+// filtros = FiltroCarteira (shared/carteira.ts). responsavelId -> local_users.id.
+export const carteiras = mysqlTable("carteiras", {
+  id: int("id").autoincrement().primaryKey(),
+  responsavelId: int("responsavelId").notNull().unique(),
+  filtros: json("filtros").notNull(),
+  atualizadoPorId: int("atualizadoPorId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Carteira = typeof carteiras.$inferSelect;
+export type InsertCarteira = typeof carteiras.$inferInsert;
+
+// Trilha de auditoria da carteira: quem atribuiu, devolveu, transferiu, arquivou ou reabriu cada lead, quando e por que.
+// de/paraResponsavelId e usuarioId -> local_users.id (usuarioNome guardado para leitura sem join).
+export const leadEventos = mysqlTable("lead_eventos", {
+  id: int("id").autoincrement().primaryKey(),
+  leadId: int("leadId").notNull(),
+  tipo: mysqlEnum("tipo", ["atribuido", "devolvido", "transferido", "arquivado", "reaberto"]).notNull(),
+  deResponsavelId: int("deResponsavelId"),
+  paraResponsavelId: int("paraResponsavelId"),
+  motivo: varchar("motivo", { length: 500 }),
+  usuarioId: int("usuarioId"),
+  usuarioNome: varchar("usuarioNome", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, t => [index("lead_eventos_leadId_idx").on(t.leadId)]);
+
+export type LeadEvento = typeof leadEventos.$inferSelect;
+export type InsertLeadEvento = typeof leadEventos.$inferInsert;
