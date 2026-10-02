@@ -31,6 +31,7 @@ import {
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
+import ImportEmpresaquiSection from "@/components/ImportEmpresaquiSection";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 type LeadStatus = "novo_lead" | "contato_inicial" | "reuniao_agendada" | "proposta_enviada";
@@ -887,7 +888,12 @@ export default function Dashboard() {
 
       {activeTab === "kanban" && <KanbanTab />}
       {activeTab === "calendar" && <CalendarTab />}
-      {activeTab === "import" && isAdmin && <ImportTab />}
+      {activeTab === "import" && isAdmin && (
+        <>
+          <ImportTab />
+          <ImportEmpresaquiSection />
+        </>
+      )}
       {activeTab === "settings" && isAdmin && <SettingsTab />}
     </DashboardLayout>
   );

@@ -29,6 +29,7 @@ import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
 import ContatosCard from "@/components/ContatosCard";
+import EmpresaCard from "@/components/EmpresaCard";
 import { cpfValido, digitos, formatarCpf } from "@shared/contatos";
 
 function formatCurrency(value: string | null): string {
@@ -296,6 +297,8 @@ export default function LeadDetail() {
             </div>
 
             <ContatosCard leadId={leadId} nomeLead={lead.nome} />
+
+            <EmpresaCard leadId={leadId} />
 
             {/* Status Card */}
             <div className="bg-white rounded-xl border border-border p-6">

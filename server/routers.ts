@@ -13,6 +13,25 @@ import { buildGoogleCalendarAuthUrl, getGoogleCalendarRedirectUri, getPublicBase
 import { sendActivationEmail } from "./_core/activationEmail";
 import { randomBytes } from "node:crypto";
 import { STATUS_CONTATO, cpfValido, digitos, emailValido, normalizarTelefone } from "@shared/contatos";
+import { LayoutInvalidoError, parseEmpresaquiCsv } from "./empresaqui/parserCsv";
+import { ArquivoInvalidoError, contarLeadsPorCnpj, decodificarArquivo, linhaEmpresa, resumirImportacao } from "./empresaqui/importacao";
+
+const arquivoCsvInput = z.object({
+  fileName: z.string().max(255),
+  conteudoBase64: z.string().min(1).max(30 * 1024 * 1024),
+});
+
+/** Le o CSV EmpresAqui enviado; erros de formato viram BAD_REQUEST com mensagem sem dados do arquivo. */
+function lerCsvEmpresaqui(conteudoBase64: string) {
+  try {
+    return parseEmpresaquiCsv(decodificarArquivo(conteudoBase64));
+  } catch (e) {
+    if (e instanceof LayoutInvalidoError || e instanceof ArquivoInvalidoError) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: e.message });
+    }
+    throw e;
+  }
+}
 
 // CPF opcional: "" limpa (null); qualquer outro valor precisa ter digito verificador valido.
 const cpfInput = z
@@ -444,7 +463,15 @@ export const appRouter = router({
       }));
       const count = await db.bulkCreateLeads(leadsToInsert, batchId);
       await db.updateImportBatchCount(batchId, count);
-      return { success: true, imported: count, batchId };
+      // Liga os leads novos as empresas ja importadas do CSV EmpresAqui (pelo CNPJ). Nao fatal: os leads ja
+      // foram gravados; uma falha aqui so deixa o vinculo para a proxima importacao do CSV.
+      let vinculados: number | null = null;
+      try {
+        vinculados = await db.vincularLeadsAEmpresas(batchId);
+      } catch (e) {
+        console.warn("[importExcel] vinculo com empresas falhou:", (e as Error).name);
+      }
+      return { success: true, imported: count, batchId, vinculados };
     }),
 
     // Protected: list import batches
@@ -544,6 +571,28 @@ export const appRouter = router({
 
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
       return db.deleteLeadContato(input.id);
+    }),
+  }),
+
+  // Empresas (CNPJ) enriquecidas pela EmpresAqui. Importacao: so admin. Leitura: qualquer logado.
+  empresas: router({
+    // Previa: le o arquivo e compara com o banco. Nao grava nada.
+    previewCsv: adminProcedure.input(arquivoCsvInput).mutation(async ({ input }) => {
+      const resultado = lerCsvEmpresaqui(input.conteudoBase64);
+      const [existentes, cnpjsLeads] = await Promise.all([db.getCnpjsEmpresas(), db.getCnpjsLeads()]);
+      return resumirImportacao(resultado, existentes, contarLeadsPorCnpj(cnpjsLeads));
+    }),
+
+    // Grava todas as empresas do arquivo (upsert) e vincula os leads, em uma transacao.
+    importarCsv: adminProcedure.input(arquivoCsvInput).mutation(async ({ input }) => {
+      const resultado = lerCsvEmpresaqui(input.conteudoBase64);
+      const agora = new Date();
+      const { gravadas, leadsVinculados } = await db.gravarEmpresasCsv(resultado.empresas.map(e => linhaEmpresa(e, agora)));
+      return { gravadas, leadsVinculados };
+    }),
+
+    doLead: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+      return db.getEmpresaDoLead(input.leadId);
     }),
   }),
 

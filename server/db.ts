@@ -1,7 +1,7 @@
 import { eq, desc, asc, inArray, sql, getTableColumns } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers, leadContatos } from "../drizzle/schema";
-import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser, InsertLeadContato } from "../drizzle/schema";
+import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers, leadContatos, empresas } from "../drizzle/schema";
+import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser, InsertLeadContato, InsertEmpresa } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -198,6 +198,90 @@ export async function deleteLeadContato(id: number) {
   if (!db) throw new Error("Database not available");
   await db.delete(leadContatos).where(eq(leadContatos.id, id));
   return { success: true };
+}
+
+// ==================== EMPRESAS (EmpresAqui) ====================
+
+export async function getCnpjsEmpresas(): Promise<Set<string>> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.select({ cnpj: empresas.cnpj }).from(empresas);
+  return new Set(rows.map(r => r.cnpj));
+}
+
+export async function getCnpjsLeads(): Promise<{ cnpj: string | null }[]> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.select({ cnpj: leads.cnpj }).from(leads).where(sql`${leads.cnpj} IS NOT NULL AND ${leads.cnpj} <> ''`);
+}
+
+// Liga lead -> empresa pelo CNPJ (so digitos, completado a 14 com zeros, mesma regra de chaveCnpjLead).
+// `updatedAt = updatedAt` impede o ON UPDATE CURRENT_TIMESTAMP: vincular nao e "editar o lead".
+const SQL_VINCULAR = sql`
+  UPDATE leads l
+  JOIN empresas e ON e.cnpj = LPAD(REGEXP_REPLACE(l.cnpj, '[^0-9]', ''), 14, '0')
+  SET l.empresaId = e.id, l.updatedAt = l.updatedAt
+  WHERE l.cnpj IS NOT NULL AND (l.empresaId IS NULL OR l.empresaId <> e.id)`;
+
+function linhasAfetadas(result: unknown): number {
+  return Number((result as [{ affectedRows?: number }])[0]?.affectedRows ?? 0);
+}
+
+/** Vincula leads a empresas ja gravadas. Com batchId, so os leads daquele lote de importacao. */
+export async function vincularLeadsAEmpresas(batchId?: number): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const query = batchId === undefined ? SQL_VINCULAR : sql`${SQL_VINCULAR} AND l.importBatchId = ${batchId}`;
+  return linhasAfetadas(await db.execute(query));
+}
+
+/**
+ * Grava (insere ou atualiza) empresas vindas do CSV, em uma transacao, e vincula os leads.
+ * No update, `dados` recebe so a chave "csv" (JSON_SET), preservando o que a API gravou em "api".
+ */
+export async function gravarEmpresasCsv(linhas: InsertEmpresa[], tamanhoLote = 200): Promise<{ gravadas: number; leadsVinculados: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const v = (coluna: string) => sql.raw(`VALUES(\`${coluna}\`)`);
+  return db.transaction(async tx => {
+    let gravadas = 0;
+    for (let i = 0; i < linhas.length; i += tamanhoLote) {
+      const lote = linhas.slice(i, i + tamanhoLote);
+      await tx.insert(empresas).values(lote).onDuplicateKeyUpdate({
+        set: {
+          razaoSocial: v("razaoSocial"),
+          nomeFantasia: v("nomeFantasia"),
+          situacaoCadastral: v("situacaoCadastral"),
+          regimeTributario: v("regimeTributario"),
+          cnaePrincipal: v("cnaePrincipal"),
+          uf: v("uf"),
+          municipio: v("municipio"),
+          totalDividasCentavos: v("totalDividasCentavos"),
+          qtdInscricoes: v("qtdInscricoes"),
+          brutoCsv: v("brutoCsv"),
+          csvAtualizadoEm: v("csvAtualizadoEm"),
+          dados: sql.raw("JSON_SET(COALESCE(`dados`, JSON_OBJECT()), '$.csv', JSON_EXTRACT(VALUES(`dados`), '$.csv'))"),
+        },
+      });
+      gravadas += lote.length;
+    }
+    const leadsVinculados = linhasAfetadas(await tx.execute(SQL_VINCULAR));
+    return { gravadas, leadsVinculados };
+  });
+}
+
+/** Empresa ligada ao lead, sem os originais pesados (brutoCsv/brutoApi). */
+export async function getEmpresaDoLead(leadId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { brutoCsv: _csv, brutoApi: _api, ...colunas } = getTableColumns(empresas);
+  const rows = await db
+    .select(colunas)
+    .from(empresas)
+    .innerJoin(leads, eq(leads.empresaId, empresas.id))
+    .where(eq(leads.id, leadId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 // ==================== STATUS HISTORY ====================
