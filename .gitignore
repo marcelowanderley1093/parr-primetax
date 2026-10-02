@@ -118,3 +118,6 @@ client/public/__manus__/version.json
 # Artefatos da Manus (contêm host/usuário do banco TiDB — nunca versionar)
 .manus/
 .manus-logs/
+
+# Dados de cliente (LGPD / art. 198 CTN): exports EmpresAqui, planilhas de edital etc.
+data/
