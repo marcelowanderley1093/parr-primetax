@@ -32,7 +32,6 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 4. **Merge em `main` e `git push` so depois do "pode mandar" do Marcelo**, com os gates (`PASSOU`) e a lista de
    commits mostrados antes; o Claude executa (autorizado em 02/10/2026). SSH, deploy, banco e VPS continuam
    exclusivamente do Marcelo.
-   SSH, deploy e banco são do Marcelo.
 5. **Segredos nunca são lidos, impressos ou commitados** (`.env`, `/etc/parr/*.env`, dumps, exports
    com dados pessoais). Só nomes de variáveis. Logs do app não carregam valores de token/hash/senha.
 6. **Prova colada verbatim**: saída real dos comandos, nunca reconstruída. `git status` limpo ao encerrar.
