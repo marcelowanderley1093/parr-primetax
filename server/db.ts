@@ -1,4 +1,4 @@
-import { eq, desc, asc, inArray, sql, getTableColumns, and, isNull, type SQL } from "drizzle-orm";
+import { eq, desc, asc, inArray, sql, getTableColumns, and, isNull, isNotNull, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers, leadContatos, empresas, leadProcedimentos, editais } from "../drizzle/schema";
 import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser, InsertLeadContato, InsertEmpresa } from "../drizzle/schema";
@@ -123,15 +123,22 @@ const colunasCard = {
   empresaDividaCentavos: empresas.totalDividasCentavos,
 };
 
-/** Filtro de carteira: undefined = todos (admin); numero = so os leads desse responsavel (parceiro). */
-const condicaoResponsavel = (responsavelId: number | undefined) =>
-  responsavelId === undefined ? undefined : eq(leads.responsavelId, responsavelId);
+/** Visao do Kanban: de quem sao os leads e se mostra os ativos ou os arquivados. */
+export type VisaoKanban = { responsavelId?: number; livres?: boolean; arquivados?: boolean };
+
+function condicaoVisao(v: VisaoKanban = {}): SQL | undefined {
+  return and(
+    v.arquivados ? isNotNull(leads.arquivadoEm) : isNull(leads.arquivadoEm),
+    v.responsavelId !== undefined ? eq(leads.responsavelId, v.responsavelId) : undefined,
+    v.livres ? isNull(leads.responsavelId) : undefined,
+  );
+}
 
 /** Uma pagina de uma coluna do Kanban (arquivados ficam de fora). */
-export async function listarColuna(status: StatusLead, busca: string | undefined, offset: number, limite: number, responsavelId?: number) {
+export async function listarColuna(status: StatusLead, busca: string | undefined, offset: number, limite: number, visao?: VisaoKanban) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const where = and(eq(leads.status, status), isNull(leads.arquivadoEm), condicaoBusca(busca), condicaoResponsavel(responsavelId));
+  const where = and(eq(leads.status, status), condicaoVisao(visao), condicaoBusca(busca));
   // Novo Lead: edital mais recente primeiro (prazo de impugnacao correndo). Demais: ultima movimentacao primeiro.
   const ordem = status === "novo_lead" ? [desc(leads.ultimaPublicacao), desc(leads.id)] : [desc(leads.updatedAt), desc(leads.id)];
   const [itens, total] = await Promise.all([
@@ -142,13 +149,13 @@ export async function listarColuna(status: StatusLead, busca: string | undefined
 }
 
 /** Total por coluna (para o cabecalho do Kanban). */
-export async function contarPorStatus(busca: string | undefined, responsavelId?: number): Promise<Record<StatusLead, number>> {
+export async function contarPorStatus(busca: string | undefined, visao?: VisaoKanban): Promise<Record<StatusLead, number>> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const rows = await db
     .select({ status: leads.status, n: sql<number>`COUNT(*)` })
     .from(leads)
-    .where(and(isNull(leads.arquivadoEm), condicaoBusca(busca), condicaoResponsavel(responsavelId)))
+    .where(and(condicaoVisao(visao), condicaoBusca(busca)))
     .groupBy(leads.status);
   const out = Object.fromEntries(STATUS_LEAD.map(s => [s, 0])) as Record<StatusLead, number>;
   for (const r of rows) out[r.status as StatusLead] = Number(r.n);
