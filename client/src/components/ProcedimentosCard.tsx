@@ -34,7 +34,7 @@ export default function ProcedimentosCard({ leadId }: { leadId: number }) {
       {prazo && (
         <div className={`text-xs px-2 py-1 rounded border mb-3 ${COR_PRAZO[prazo.nivel]}`}>
           {prazo.rotulo}
-          <div className="text-[10px] opacity-80">Estimado: publicação do edital mais recente + 30 dias corridos</div>
+          <div className="text-[10px] opacity-80">Publicação do edital mais recente + 30 dias corridos, prorrogado para o 1º dia útil (fins de semana e feriados nacionais)</div>
         </div>
       )}
 

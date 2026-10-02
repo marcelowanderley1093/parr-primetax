@@ -91,7 +91,7 @@ const COR_SITUACAO_EMPRESA: Record<string, string> = {
 
 type DashboardTab = "kanban" | "calendar" | "import" | "settings";
 
-function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead; hoje: string; onDragStart: (e: React.DragEvent, lead: Lead) => void; onClick: () => void; onDelete: (id: number) => void }) {
+function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead; hoje: string; onDragStart: (e: React.DragEvent, lead: Lead) => void; onClick: () => void; onDelete?: (id: number) => void }) {
   const prazo = situacaoPrazo(lead.ultimaPublicacao, hoje);
   return (
     <div
@@ -109,9 +109,11 @@ function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead
           <button onClick={(e) => { e.stopPropagation(); onClick(); }} className="p-1 rounded hover:bg-muted transition-colors" title="Editar">
             <Pencil className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-primary transition-colors" />
           </button>
-          <button onClick={(e) => { e.stopPropagation(); if (confirm("Excluir este cliente?")) onDelete(lead.id); }} className="p-1 rounded hover:bg-red-50 transition-colors" title="Excluir">
-            <Trash2 className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-red-500 transition-colors" />
-          </button>
+          {onDelete && (
+            <button onClick={(e) => { e.stopPropagation(); if (confirm("Excluir este cliente?")) onDelete(lead.id); }} className="p-1 rounded hover:bg-red-50 transition-colors" title="Excluir">
+              <Trash2 className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-red-500 transition-colors" />
+            </button>
+          )}
         </div>
       </div>
       <div className="space-y-1.5">
@@ -154,7 +156,7 @@ function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead
           </div>
         ) : null}
         {prazo && (
-          <div className={`text-[11px] px-2 py-0.5 rounded border inline-block ${COR_PRAZO[prazo.nivel]}`} title="Prazo estimado: publicação do edital + 30 dias corridos">
+          <div className={`text-[11px] px-2 py-0.5 rounded border inline-block ${COR_PRAZO[prazo.nivel]}`} title="Publicação do edital + 30 dias corridos, prorrogado para o 1º dia útil (fins de semana e feriados nacionais)">
             {prazo.rotulo}
           </div>
         )}
@@ -180,7 +182,7 @@ function KanbanColumn({ status, busca, hoje, onDragStart, onDrop, onDragOver, on
   onDrop: (e: React.DragEvent, status: LeadStatus) => void;
   onDragOver: (e: React.DragEvent, status: LeadStatus) => void;
   onCardClick: (lead: Lead) => void;
-  onDeleteLead: (id: number) => void;
+  onDeleteLead?: (id: number) => void;
   isDragOver: boolean;
 }) {
   const config = STATUS_CONFIG[status];
@@ -228,9 +230,14 @@ function KanbanColumn({ status, busca, hoje, onDragStart, onDrop, onDragOver, on
   );
 }
 
+// Importacao pela tela: ate 5.000 linhas (acima disso, scripts/import-editais.ts). Mesmo limite no servidor.
+const LIMITE_LINHAS_IMPORTACAO = 5000;
+
 // ==================== KANBAN TAB ====================
 function KanbanTab() {
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin"; // excluir lead: so admin (o parceiro arquiva)
   const [search, setSearch] = useState("");
   const [busca, setBusca] = useState(""); // busca efetiva, com atraso para nao consultar a cada tecla
   const [dragOverColumn, setDragOverColumn] = useState<LeadStatus | null>(null);
@@ -322,7 +329,7 @@ function KanbanTab() {
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onCardClick={(lead) => setLocation(`/dashboard/lead/${lead.id}`)}
-            onDeleteLead={handleDeleteLead}
+            onDeleteLead={isAdmin ? handleDeleteLead : undefined}
             isDragOver={dragOverColumn === status}
           />
         ))}
@@ -575,6 +582,22 @@ function ImportTab() {
     }
 
     const hdrs = (data[0] as any[]).map((h: any) => String(h != null ? h : "").trim());
+
+    // Arquivo exportado da EmpresAqui nao e planilha de leads: vai na secao "Atualizar empresas", abaixo.
+    const chave = (h: string) => h.toLowerCase().replace(/[^a-z0-9 .]/g, "");
+    const marcasEmpresaqui = hdrs.map(chave).filter(h => /^situa.*cad/.test(h) || /^identificador 1/.test(h) || /^regime tribut/.test(h) || /^cd\.? ibge/.test(h)).length;
+    if (marcasEmpresaqui >= 2) {
+      toast.error("Este é um arquivo da EmpresAqui. Use a seção \"Atualizar empresas (EmpresAqui)\", no fim desta página.");
+      setParsedData([]);
+      setHeaders([]);
+      return;
+    }
+    if (data.length - 1 > LIMITE_LINHAS_IMPORTACAO) {
+      toast.error(`Planilha com mais de ${LIMITE_LINHAS_IMPORTACAO.toLocaleString("pt-BR")} linhas: bases grandes de editais são carregadas pelo script de carga, não por esta tela.`);
+      setParsedData([]);
+      setHeaders([]);
+      return;
+    }
     // Filter out completely empty headers
     const validHeaders = hdrs.filter(h => h !== "");
     const validIndices = hdrs.map((h, i) => h !== "" ? i : -1).filter(i => i >= 0);

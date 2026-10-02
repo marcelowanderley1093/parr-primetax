@@ -203,7 +203,9 @@ export default function LeadDetail() {
                   ) : (
                     <>
                       <Button variant="ghost" size="sm" onClick={startEditing}><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => { if (confirm('Excluir este lead permanentemente?')) deleteLeadMutation.mutate({ id: leadId }); }}><Trash2 className="h-4 w-4" /></Button>
+                      {user?.role === "admin" && (
+                        <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => { if (confirm('Excluir este lead permanentemente?')) deleteLeadMutation.mutate({ id: leadId }); }}><Trash2 className="h-4 w-4" /></Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -249,14 +251,14 @@ export default function LeadDetail() {
                     <Mail className="h-4 w-4 text-muted-foreground mt-0.5" />
                     <div>
                       <div className="text-xs text-muted-foreground">E-mail</div>
-                      <div className="font-medium text-sm">{lead.email}</div>
+                      <div className="font-medium text-sm">{lead.email || <span className="text-muted-foreground font-normal">Não informado (ver Contatos)</span>}</div>
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
                     <Phone className="h-4 w-4 text-muted-foreground mt-0.5" />
                     <div>
                       <div className="text-xs text-muted-foreground">Telefone</div>
-                      <div className="font-medium text-sm">{lead.telefone}</div>
+                      <div className="font-medium text-sm">{lead.telefone || <span className="text-muted-foreground font-normal">Não informado (ver Contatos)</span>}</div>
                     </div>
                   </div>
                   {lead.cnpj && (
@@ -289,8 +291,18 @@ export default function LeadDetail() {
                   <div className="flex items-start gap-3">
                     <Calendar className="h-4 w-4 text-muted-foreground mt-0.5" />
                     <div>
-                      <div className="text-xs text-muted-foreground">Data de Entrada</div>
-                      <div className="font-medium text-sm">{new Date(lead.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}</div>
+                      {lead.primeiraPublicacao ? (
+                        <>
+                          <div className="text-xs text-muted-foreground">1ª publicação em edital</div>
+                          <div className="font-medium text-sm">{lead.primeiraPublicacao.split("-").reverse().join("/")}</div>
+                          <div className="text-[11px] text-muted-foreground">Cadastrado no PARR em {new Date(lead.createdAt).toLocaleDateString("pt-BR")}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-xs text-muted-foreground">Data de Entrada</div>
+                          <div className="font-medium text-sm">{new Date(lead.createdAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}</div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
