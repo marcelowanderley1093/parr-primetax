@@ -29,8 +29,9 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 2. **Uma branch por tarefa a partir de `main`** (`fix/…`, `feat/…`, `chore/…`). Commits pequenos e nomeados.
 3. **Gates imprimem literalmente `PASSOU` ou `PARAR`**, um comando por linha, sem `&&` encadeado; ao
    `PARAR`, interromper e reportar, nunca contornar.
-4. **Nunca `git push`, nunca merge em `main`.** Marcelo valida no shell dele, mergeia e faz push.
-   SSH, deploy e banco são do Marcelo.
+4. **Merge em `main` e `git push` so depois do "pode mandar" do Marcelo**, com os gates (`PASSOU`) e a lista de
+   commits mostrados antes; o Claude executa (autorizado em 02/10/2026). SSH, deploy, banco e VPS continuam
+   exclusivamente do Marcelo.
 5. **Segredos nunca são lidos, impressos ou commitados** (`.env`, `/etc/parr/*.env`, dumps, exports
    com dados pessoais). Só nomes de variáveis. Logs do app não carregam valores de token/hash/senha.
 6. **Prova colada verbatim**: saída real dos comandos, nunca reconstruída. `git status` limpo ao encerrar.
@@ -46,7 +47,7 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 ## Comandos
 - Typecheck: `pnpm check` (= `tsc --noEmit`) · Testes: `pnpm test` (= `vitest run`; inclui
   `server/**/*.test.ts` e `client/src/**/*.test.ts`) · Build: `pnpm build`.
-- Baseline atual: tsc 0 · **151 passed / 0 failed** (20 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
+- Baseline atual: tsc 0 · **287 passed / 0 failed** (28 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
   Nenhum teste depende de `.env`.
 - Migrações: editar `drizzle/schema.ts` → `pnpm exec drizzle-kit generate --name <descricao>` (exige
   `DATABASE_URL` definida no shell, qualquer valor; não conecta) → conferir o `.sql` gerado. **Nunca editar

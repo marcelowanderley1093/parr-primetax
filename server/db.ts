@@ -123,11 +123,15 @@ const colunasCard = {
   empresaDividaCentavos: empresas.totalDividasCentavos,
 };
 
+/** Filtro de carteira: undefined = todos (admin); numero = so os leads desse responsavel (parceiro). */
+const condicaoResponsavel = (responsavelId: number | undefined) =>
+  responsavelId === undefined ? undefined : eq(leads.responsavelId, responsavelId);
+
 /** Uma pagina de uma coluna do Kanban (arquivados ficam de fora). */
-export async function listarColuna(status: StatusLead, busca: string | undefined, offset: number, limite: number) {
+export async function listarColuna(status: StatusLead, busca: string | undefined, offset: number, limite: number, responsavelId?: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const where = and(eq(leads.status, status), isNull(leads.arquivadoEm), condicaoBusca(busca));
+  const where = and(eq(leads.status, status), isNull(leads.arquivadoEm), condicaoBusca(busca), condicaoResponsavel(responsavelId));
   // Novo Lead: edital mais recente primeiro (prazo de impugnacao correndo). Demais: ultima movimentacao primeiro.
   const ordem = status === "novo_lead" ? [desc(leads.ultimaPublicacao), desc(leads.id)] : [desc(leads.updatedAt), desc(leads.id)];
   const [itens, total] = await Promise.all([
@@ -138,17 +142,36 @@ export async function listarColuna(status: StatusLead, busca: string | undefined
 }
 
 /** Total por coluna (para o cabecalho do Kanban). */
-export async function contarPorStatus(busca: string | undefined): Promise<Record<StatusLead, number>> {
+export async function contarPorStatus(busca: string | undefined, responsavelId?: number): Promise<Record<StatusLead, number>> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const rows = await db
     .select({ status: leads.status, n: sql<number>`COUNT(*)` })
     .from(leads)
-    .where(and(isNull(leads.arquivadoEm), condicaoBusca(busca)))
+    .where(and(isNull(leads.arquivadoEm), condicaoBusca(busca), condicaoResponsavel(responsavelId)))
     .groupBy(leads.status);
   const out = Object.fromEntries(STATUS_LEAD.map(s => [s, 0])) as Record<StatusLead, number>;
   for (const r of rows) out[r.status as StatusLead] = Number(r.n);
   return out;
+}
+
+/** Dono do lead (para o controle de acesso). */
+export async function getResponsavelDoLead(leadId: number): Promise<{ responsavelId: number | null } | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select({ responsavelId: leads.responsavelId }).from(leads).where(eq(leads.id, leadId)).limit(1);
+  return rows[0];
+}
+
+/** Ids de eventos do Google Calendar dos leads de um responsavel (agenda do parceiro). */
+export async function getCalendarEventIdsDoResponsavel(responsavelId: number): Promise<Set<string>> {
+  const db = await getDb();
+  if (!db) return new Set();
+  const rows = await db
+    .select({ id: leads.calendarEventId })
+    .from(leads)
+    .where(and(eq(leads.responsavelId, responsavelId), sql`${leads.calendarEventId} IS NOT NULL AND ${leads.calendarEventId} <> ''`));
+  return new Set(rows.map(r => r.id).filter((x): x is string => !!x));
 }
 
 /** Procedimentos do lead com o edital de cada um, do mais recente para o mais antigo. */
@@ -287,10 +310,11 @@ export async function getCnpjsEmpresas(): Promise<Set<string>> {
   return new Set(rows.map(r => r.cnpj));
 }
 
+/** CNPJs dos leads AINDA SEM empresa vinculada (para a previa contar so o que a importacao vai ligar). */
 export async function getCnpjsLeads(): Promise<{ cnpj: string | null }[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return db.select({ cnpj: leads.cnpj }).from(leads).where(sql`${leads.cnpj} IS NOT NULL AND ${leads.cnpj} <> ''`);
+  return db.select({ cnpj: leads.cnpj }).from(leads).where(sql`${leads.cnpj} IS NOT NULL AND ${leads.cnpj} <> '' AND ${leads.empresaId} IS NULL`);
 }
 
 // Liga lead -> empresa pelo CNPJ (so digitos, completado a 14 com zeros, mesma regra de chaveCnpjLead).
@@ -399,22 +423,25 @@ export async function getAllSettings(): Promise<Record<string, string>> {
 
 // ==================== BULK IMPORT ====================
 
+/** Grava os leads da planilha em UMA transacao: ou entram todos, ou nenhum (falha no meio nao deixa lixo). */
 export async function bulkCreateLeads(data: InsertLead[], batchId: number): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  let count = 0;
-  for (const lead of data) {
-    const result = await db.insert(leads).values({ ...lead, importBatchId: batchId });
-    const insertId = result[0].insertId;
-    await db.insert(leadStatusHistory).values({
-      leadId: insertId,
-      fromStatus: null,
-      toStatus: lead.status || "novo_lead",
-      userName: "Importação Excel",
-    });
-    count++;
-  }
-  return count;
+  return db.transaction(async tx => {
+    let count = 0;
+    for (const lead of data) {
+      const result = await tx.insert(leads).values({ ...lead, importBatchId: batchId });
+      const insertId = result[0].insertId;
+      await tx.insert(leadStatusHistory).values({
+        leadId: insertId,
+        fromStatus: null,
+        toStatus: lead.status || "novo_lead",
+        userName: "Importação Excel",
+      });
+      count++;
+    }
+    return count;
+  });
 }
 
 // ==================== LEAD IMPORTS ====================

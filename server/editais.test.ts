@@ -1,29 +1,54 @@
 import { describe, expect, it } from "vitest";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
-import { hojeIso, prazoImpugnacao, situacaoPrazo } from "../shared/editais";
+import { diaSemExpediente, hojeIso, prazoImpugnacao, situacaoPrazo } from "../shared/editais";
 import { condicaoBusca } from "./db";
 
-describe("prazoImpugnacao (publicacao + 30 dias corridos)", () => {
-  it("soma 30 dias, inclusive virando mes e ano", () => {
-    expect(prazoImpugnacao("2025-12-18")).toBe("2026-01-17");
-    expect(prazoImpugnacao("2026-01-31")).toBe("2026-03-02");
-    expect(prazoImpugnacao("2028-02-01")).toBe("2028-03-02"); // 2028 e bissexto
+describe("prazoImpugnacao (publicacao + 30 dias corridos, prorrogado para dia util)", () => {
+  it("vencimento em dia util nao muda (inclusive ano bissexto)", () => {
+    expect(prazoImpugnacao("2026-01-31")).toBe("2026-03-02"); // segunda
+    expect(prazoImpugnacao("2028-02-01")).toBe("2028-03-02"); // quinta; 2028 e bissexto
+  });
+
+  it("vencimento no fim de semana vai para segunda", () => {
+    expect(prazoImpugnacao("2025-12-18")).toBe("2026-01-19"); // 17/01/2026 e sabado
+  });
+
+  it("feriado nacional prorroga; feriado + fim de semana prorroga ate o primeiro dia util", () => {
+    expect(prazoImpugnacao("2026-03-22")).toBe("2026-04-22"); // 21/04 Tiradentes (terca)
+    expect(prazoImpugnacao("2026-11-25")).toBe("2026-12-28"); // 25/12 sexta -> sab, dom -> segunda
+  });
+
+  it("20/11 so e feriado nacional a partir de 2024 (Lei 14.759/2023)", () => {
+    expect(prazoImpugnacao("2025-10-21")).toBe("2025-11-21");
+    expect(prazoImpugnacao("2023-10-21")).toBe("2023-11-20");
+  });
+
+  it("conservador: Sexta-feira da Paixao e Carnaval NAO prorrogam", () => {
+    expect(prazoImpugnacao("2026-03-04")).toBe("2026-04-03"); // Sexta-feira da Paixao de 2026
+    expect(prazoImpugnacao("2026-01-17")).toBe("2026-02-16"); // segunda de Carnaval de 2026
   });
 
   it("data invalida -> null", () => {
     expect(prazoImpugnacao("18/12/2025")).toBeNull();
+    expect(prazoImpugnacao("2025-02-30")).toBeNull();
     expect(prazoImpugnacao("")).toBeNull();
+  });
+
+  it("diaSemExpediente", () => {
+    expect(diaSemExpediente("2026-01-17")).toBe(true); // sabado
+    expect(diaSemExpediente("2026-09-07")).toBe(true); // feriado
+    expect(diaSemExpediente("2026-01-19")).toBe(false);
   });
 });
 
 describe("situacaoPrazo", () => {
   it("aberto, atencao, critico, vence hoje e encerrado", () => {
-    expect(situacaoPrazo("2025-12-18", "2025-12-20")).toMatchObject({ prazo: "2026-01-17", dias: 28, nivel: "aberto" });
-    expect(situacaoPrazo("2025-12-18", "2026-01-07")).toMatchObject({ dias: 10, nivel: "atencao" });
-    expect(situacaoPrazo("2025-12-18", "2026-01-14")).toMatchObject({ dias: 3, nivel: "critico", rotulo: "Impugnação até 17/01/2026 · faltam 3 dias" });
-    expect(situacaoPrazo("2025-12-18", "2026-01-16")?.rotulo).toMatch(/falta 1 dia$/);
-    expect(situacaoPrazo("2025-12-18", "2026-01-17")?.rotulo).toMatch(/vence hoje$/);
-    expect(situacaoPrazo("2025-12-18", "2026-01-18")).toMatchObject({ dias: -1, nivel: "encerrado", rotulo: "Prazo encerrado em 17/01/2026" });
+    expect(situacaoPrazo("2025-12-18", "2025-12-20")).toMatchObject({ prazo: "2026-01-19", dias: 30, nivel: "aberto" });
+    expect(situacaoPrazo("2025-12-18", "2026-01-09")).toMatchObject({ dias: 10, nivel: "atencao" });
+    expect(situacaoPrazo("2025-12-18", "2026-01-16")).toMatchObject({ dias: 3, nivel: "critico", rotulo: "Impugnação até 19/01/2026 · faltam 3 dias" });
+    expect(situacaoPrazo("2025-12-18", "2026-01-18")?.rotulo).toMatch(/falta 1 dia$/);
+    expect(situacaoPrazo("2025-12-18", "2026-01-19")?.rotulo).toMatch(/vence hoje$/);
+    expect(situacaoPrazo("2025-12-18", "2026-01-20")).toMatchObject({ dias: -1, nivel: "encerrado", rotulo: "Prazo encerrado em 19/01/2026" });
   });
 
   it("sem publicacao ou com data ruim -> null", () => {

@@ -144,8 +144,8 @@ describe("leads.update com CPF", () => {
     await expect(caller.leads.update({ id: 1, cpf: "123.456.789-00" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
-  it("aceita CPF valido e CPF vazio (limpar): passa da validacao e chega ao banco", async () => {
-    const caller = appRouter.createCaller(ctx(true));
+  it("aceita CPF valido e CPF vazio (limpar): passa da validacao e chega ao banco (admin)", async () => {
+    const caller = appRouter.createCaller({ ...ctx(true), user: { ...ctx(true).user!, role: "admin" } });
     await expect(caller.leads.update({ id: 1, cpf: "123.456.789-09" })).rejects.toThrow("Database not available");
     await expect(caller.leads.update({ id: 1, cpf: "" })).rejects.toThrow("Database not available");
   });

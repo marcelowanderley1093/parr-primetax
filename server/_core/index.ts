@@ -76,6 +76,12 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      // Log sem mensagem nem valores (podem conter dados pessoais): so rota, codigo e tipo do erro de origem.
+      onError: ({ path, error }) => {
+        if (error.code !== "INTERNAL_SERVER_ERROR") return;
+        const causa = error.cause as { name?: string; code?: string } | undefined;
+        console.error(`[trpc] ${path ?? "?"}: ${error.code} (${causa?.name ?? "Error"}${causa?.code ? ` ${causa.code}` : ""})`);
+      },
     })
   );
   // development mode uses Vite, production mode uses static files

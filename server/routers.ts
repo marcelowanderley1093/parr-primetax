@@ -5,6 +5,7 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
+import type { TrpcContext } from "./_core/context";
 import { notifyOwner } from "./_core/notification";
 import { ENV } from "./_core/env";
 import { checkRateLimit, rateLimitKey, resetRateLimit } from "./_core/rateLimit";
@@ -14,12 +15,42 @@ import { sendActivationEmail } from "./_core/activationEmail";
 import { randomBytes } from "node:crypto";
 import { STATUS_CONTATO, cpfValido, digitos, emailValido, normalizarTelefone } from "@shared/contatos";
 import { LayoutInvalidoError, parseEmpresaquiCsv } from "./empresaqui/parserCsv";
+import { LEAD_NAO_ENCONTRADO, exigirAcessoLead, responsavelDoEscopo } from "./acesso";
 import { ArquivoInvalidoError, contarLeadsPorCnpj, decodificarArquivo, linhaEmpresa, resumirImportacao } from "./empresaqui/importacao";
 
 const arquivoCsvInput = z.object({
   fileName: z.string().max(255),
   conteudoBase64: z.string().min(1).max(30 * 1024 * 1024),
 });
+
+/**
+ * Cancelar/remarcar: alem do acesso ao lead, o evento informado tem de ser o do proprio lead
+ * (impede usar um lead da carteira para mexer no evento de outro).
+ */
+async function exigirEventoDoLead(user: NonNullable<TrpcContext["user"]>, leadId: number, eventId: string) {
+  await exigirAcessoLead(user, leadId);
+  const lead = await db.getLeadById(leadId);
+  if (!lead || !lead.calendarEventId || lead.calendarEventId !== eventId) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Evento não encontrado para este lead" });
+  }
+}
+
+/** Tamanho maximo de cada campo na importacao de Excel (= tamanho das colunas em `leads`). */
+export const LIMITES_IMPORTACAO = { nome: 255, email: 320, telefone: 30, cnpj: 20, valorDivida: 50, devedorPrincipal: 255 } as const;
+
+/** Problemas por linha (linha 2 = primeira linha de dados da planilha). Sem valores na mensagem. */
+export function validarLinhasImportacao(linhas: Array<Partial<Record<keyof typeof LIMITES_IMPORTACAO | "mensagem", string>>>): string[] {
+  const out: string[] = [];
+  linhas.forEach((l, i) => {
+    const n = i + 2;
+    if (!l.nome || !l.nome.trim()) out.push(`linha ${n}: nome vazio`);
+    for (const [campo, max] of Object.entries(LIMITES_IMPORTACAO) as [keyof typeof LIMITES_IMPORTACAO, number][]) {
+      const v = l[campo];
+      if (v && v.length > max) out.push(`linha ${n}: ${campo} com mais de ${max} caracteres`);
+    }
+  });
+  return out;
+}
 
 /** Le o CSV EmpresAqui enviado; erros de formato viram BAD_REQUEST com mensagem sem dados do arquivo. */
 function lerCsvEmpresaqui(conteudoBase64: string) {
@@ -230,25 +261,27 @@ export const appRouter = router({
       busca: z.string().max(100).optional(),
       cursor: z.number().int().min(0).optional(), // offset
       limite: z.number().int().min(1).max(100).default(50),
-    })).query(async ({ input }) => {
+    })).query(async ({ input, ctx }) => {
       const offset = input.cursor ?? 0;
-      const { itens, total } = await db.listarColuna(input.status, input.busca, offset, input.limite);
+      const { itens, total } = await db.listarColuna(input.status, input.busca, offset, input.limite, responsavelDoEscopo(ctx.user));
       const proximo = offset + itens.length < total ? offset + itens.length : null;
       return { itens, total, proximo };
     }),
 
     // Totais por coluna (cabecalho do Kanban), respeitando a busca.
-    contagem: protectedProcedure.input(z.object({ busca: z.string().max(100).optional() })).query(async ({ input }) => {
-      return db.contarPorStatus(input.busca);
+    contagem: protectedProcedure.input(z.object({ busca: z.string().max(100).optional() })).query(async ({ input, ctx }) => {
+      return db.contarPorStatus(input.busca, responsavelDoEscopo(ctx.user));
     }),
 
     // Editais e procedimentos do lead.
-    procedimentos: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+    procedimentos: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       return db.getProcedimentosDoLead(input.leadId);
     }),
 
     // Protected: get lead by id
-    getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input }) => {
+    getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.id);
       return db.getLeadById(input.id);
     }),
 
@@ -257,6 +290,7 @@ export const appRouter = router({
       id: z.number(),
       status: z.enum(["novo_lead", "contato_inicial", "reuniao_agendada", "proposta_enviada"]),
     })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.id);
       return db.updateLeadStatus(input.id, input.status, ctx.user.id, ctx.user.name || "Admin");
     }),
 
@@ -270,7 +304,8 @@ export const appRouter = router({
       devedorPrincipal: z.string().optional(),
       valorDivida: z.string().optional(),
       cpf: cpfInput.optional(),
-    })).mutation(async ({ input }) => {
+    })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.id);
       const { id, ...data } = input;
       const cleanData: Record<string, string | null> = {};
       for (const [key, value] of Object.entries(data)) {
@@ -279,14 +314,15 @@ export const appRouter = router({
       return db.updateLead(id, cleanData as any);
     }),
 
-    // Protected: delete lead
-    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    // Excluir lead: so admin (decisao 02/10/2026). O parceiro arquiva.
+    delete: adminProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
       await db.deleteLead(input.id);
       return { success: true };
     }),
 
     // Protected: get notes for a lead
-    getNotes: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+    getNotes: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       return db.getLeadNotes(input.leadId);
     }),
 
@@ -295,6 +331,7 @@ export const appRouter = router({
       leadId: z.number(),
       content: z.string().min(1),
     })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       return db.createLeadNote({
         leadId: input.leadId,
         userId: ctx.user.id,
@@ -304,7 +341,8 @@ export const appRouter = router({
     }),
 
     // Protected: get status history for a lead
-    getHistory: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+    getHistory: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       return db.getLeadStatusHistory(input.leadId);
     }),
 
@@ -317,6 +355,7 @@ export const appRouter = router({
       endTime: z.string(),
       attendeeEmail: z.string().email().optional(),
     })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       let calendarEventId = `local-${Date.now()}`;
       try {
         const accessToken = await getCalendarAccessToken();
@@ -341,7 +380,8 @@ export const appRouter = router({
             body: JSON.stringify(event),
           });
           const calData = await calRes.json();
-          console.log("[Google Calendar] Create event response:", JSON.stringify(calData));
+          // Nao registrar a resposta inteira: traz e-mail de convidado (dado pessoal).
+          console.log("[Google Calendar] Create event:", calData.id ? "ok" : "sem id");
           if (calData.id) {
             calendarEventId = calData.id;
           } else if (calData.error) {
@@ -368,6 +408,7 @@ export const appRouter = router({
       leadId: z.number(),
       eventId: z.string(),
     })).mutation(async ({ input, ctx }) => {
+      await exigirEventoDoLead(ctx.user, input.leadId, input.eventId);
       try {
         const accessToken = await getCalendarAccessToken();
         if (accessToken && !input.eventId.startsWith("local-")) {
@@ -404,6 +445,7 @@ export const appRouter = router({
       endTime: z.string(),
       attendeeEmail: z.string().email().optional(),
     })).mutation(async ({ input, ctx }) => {
+      await exigirEventoDoLead(ctx.user, input.leadId, input.eventId);
       let newEventId = input.eventId;
       try {
         const accessToken = await getCalendarAccessToken();
@@ -458,8 +500,13 @@ export const appRouter = router({
         valorDivida: z.string().optional(),
         mensagem: z.string().optional(),
         devedorPrincipal: z.string().optional(),
-      })),
+      })).max(5000),
     })).mutation(async ({ input, ctx }) => {
+      // Valida tudo antes de gravar: o erro aponta a linha e o campo, nunca o conteudo.
+      const problemas = validarLinhasImportacao(input.leads);
+      if (problemas.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Planilha recusada, nada foi gravado. ${problemas.slice(0, 5).join("; ")}${problemas.length > 5 ? ` (e mais ${problemas.length - 5})` : ""}.` });
+      }
       // Create import batch record
       const batchId = await db.createImportBatch({
         fileName: input.fileName || "Importação Excel",
@@ -479,7 +526,14 @@ export const appRouter = router({
         lgpdConsent: 1,
         status: "novo_lead" as const,
       }));
-      const count = await db.bulkCreateLeads(leadsToInsert, batchId);
+      let count: number;
+      try {
+        count = await db.bulkCreateLeads(leadsToInsert, batchId);
+      } catch (e) {
+        // A transacao ja desfez os leads; remove tambem o registro do lote, que ficaria vazio.
+        await db.deleteImportBatch(batchId).catch(() => undefined);
+        throw e;
+      }
       await db.updateImportBatchCount(batchId, count);
       // Liga os leads novos as empresas ja importadas do CSV EmpresAqui (pelo CNPJ). Nao fatal: os leads ja
       // foram gravados; uma falha aqui so deixa o vinculo para a proxima importacao do CSV.
@@ -506,7 +560,7 @@ export const appRouter = router({
     }),
 
     // Protected: get calendar events for dashboard calendar view
-    getCalendarEvents: protectedProcedure.query(async () => {
+    getCalendarEvents: protectedProcedure.query(async ({ ctx }) => {
       try {
         const accessToken = await getCalendarAccessToken();
         if (!accessToken) return { connected: false, events: [] };
@@ -529,6 +583,12 @@ export const appRouter = router({
           description: item.description || "",
         }));
 
+        // Parceiro ve so os eventos dos leads da carteira dele (decisao 02/10/2026).
+        const responsavel = responsavelDoEscopo(ctx.user);
+        if (responsavel !== undefined) {
+          const meus = await db.getCalendarEventIdsDoResponsavel(responsavel);
+          return { connected: true, events: events.filter((e: { id: string }) => meus.has(e.id)) };
+        }
         return { connected: true, events };
       } catch (e) {
         console.error("[Google Calendar] Error fetching events:", e);
@@ -541,7 +601,8 @@ export const appRouter = router({
   // Contatos do lead (lead_contatos): qualquer usuario logado le e edita (decisao 02/10/2026).
   // Cada escrita grava quem alterou (users.id + nome). Telefone so digitos, sem DDI.
   contatos: router({
-    list: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+    list: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       return db.getLeadContatos(input.leadId);
     }),
 
@@ -554,8 +615,9 @@ export const appRouter = router({
       observacao: z.string().max(2000).optional(),
     })).mutation(async ({ input, ctx }) => {
       const valor = normalizarValorContato(input.tipo, input.valor);
+      await exigirAcessoLead(ctx.user, input.leadId);
       const lead = await db.getLeadById(input.leadId);
-      if (!lead) throw new TRPCError({ code: "NOT_FOUND", message: "Lead não encontrado" });
+      if (!lead) throw new TRPCError({ code: "NOT_FOUND", message: LEAD_NAO_ENCONTRADO });
       const id = await db.createLeadContato({
         leadId: input.leadId,
         pessoaNome: input.pessoaNome || null,
@@ -578,6 +640,7 @@ export const appRouter = router({
     })).mutation(async ({ input, ctx }) => {
       const atual = await db.getLeadContatoById(input.id);
       if (!atual) throw new TRPCError({ code: "NOT_FOUND", message: "Contato não encontrado" });
+      await exigirAcessoLead(ctx.user, atual.leadId);
       return db.updateLeadContato(input.id, {
         ...(input.status !== undefined && { status: input.status }),
         ...(input.observacao !== undefined && { observacao: input.observacao.trim() || null }),
@@ -587,7 +650,10 @@ export const appRouter = router({
       });
     }),
 
-    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input, ctx }) => {
+      const atual = await db.getLeadContatoById(input.id);
+      if (!atual) throw new TRPCError({ code: "NOT_FOUND", message: "Contato não encontrado" });
+      await exigirAcessoLead(ctx.user, atual.leadId);
       return db.deleteLeadContato(input.id);
     }),
   }),
@@ -609,7 +675,8 @@ export const appRouter = router({
       return { gravadas, leadsVinculados };
     }),
 
-    doLead: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+    doLead: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
       return db.getEmpresaDoLead(input.leadId);
     }),
   }),

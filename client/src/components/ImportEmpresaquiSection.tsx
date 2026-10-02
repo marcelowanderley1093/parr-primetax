@@ -84,7 +84,7 @@ export default function ImportEmpresaquiSection() {
             <div className="rounded-lg bg-muted/50 p-3"><div className="text-xl font-bold">{n(r.empresasNoArquivo)}</div><div className="text-xs text-muted-foreground">empresas no arquivo</div></div>
             <div className="rounded-lg bg-muted/50 p-3"><div className="text-xl font-bold">{n(r.novas)}</div><div className="text-xs text-muted-foreground">novas</div></div>
             <div className="rounded-lg bg-muted/50 p-3"><div className="text-xl font-bold">{n(r.atualizadas)}</div><div className="text-xs text-muted-foreground">já existentes (atualizar)</div></div>
-            <div className="rounded-lg bg-primary/10 p-3"><div className="text-xl font-bold text-primary">{n(r.leadsAVincular)}</div><div className="text-xs text-muted-foreground">leads serão vinculados</div></div>
+            <div className="rounded-lg bg-primary/10 p-3"><div className="text-xl font-bold text-primary">{n(r.leadsAVincular)}</div><div className="text-xs text-muted-foreground">leads ainda sem empresa serão vinculados</div></div>
           </div>
           {r.empresasSemLeadAinda > 0 && (
             <p className="text-xs text-muted-foreground">

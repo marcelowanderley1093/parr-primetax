@@ -16,6 +16,7 @@ import mysql from "mysql2/promise";
 import { drizzle } from "drizzle-orm/mysql2";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "../drizzle/schema";
+import { vincularLeadsAEmpresas } from "../server/db";
 import {
   ImportEditaisAbort, LayoutEditaisError, chaveEdital, chaveLead, cnpj14, lerCsvEditais, parseArgsEditais, planejarImportacao,
   type LeadExistente,
@@ -156,6 +157,10 @@ async function main(): Promise<number> {
       if ((i / LOTE_PROCEDIMENTOS) % 50 === 0) console.log(`  procedimentos: ${procInseridos}/${plano.procedimentosNovos.length}`);
     }
     console.log(`  procedimentos gravados: ${procInseridos} · sem lead/edital correspondente: ${semLead}`);
+
+    // Liga os leads (novos e antigos) as empresas ja importadas da EmpresAqui, pelo CNPJ (mesma regra da tela).
+    const vinculados = await vincularLeadsAEmpresas();
+    console.log(`  leads vinculados a empresas da EmpresAqui: ${vinculados}`);
 
     // 6. Conferencia
     const depois = {

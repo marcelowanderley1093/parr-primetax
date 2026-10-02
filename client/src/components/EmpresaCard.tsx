@@ -61,11 +61,11 @@ export default function EmpresaCard({ leadId }: { leadId: number }) {
 
   return (
     <div className="bg-white rounded-xl border border-border p-6">
-      <div className="flex items-center justify-between mb-4 gap-2">
+      <div className="mb-4">
         <h2 className="font-bold text-lg flex items-center gap-2">
           <Building2 className="h-5 w-5 text-primary" /> Dados da empresa
         </h2>
-        {atualizado && <span className="text-xs text-muted-foreground">EmpresAqui · {atualizado}</span>}
+        {atualizado && <div className="text-xs text-muted-foreground mt-0.5">Fonte: EmpresAqui · atualizado em {atualizado}</div>}
       </div>
 
       <div className="space-y-3 text-sm">
