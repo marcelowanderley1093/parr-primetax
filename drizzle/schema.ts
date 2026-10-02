@@ -66,6 +66,8 @@ export const leads = mysqlTable("leads", {
 }, t => [
   index("leads_empresaId_idx").on(t.empresaId),
   index("leads_status_idx").on(t.status),
+  // Kanban: coluna (status) ordenada pela publicacao mais recente, paginada.
+  index("leads_status_ultimaPublicacao_idx").on(t.status, t.ultimaPublicacao),
   index("leads_responsavelId_idx").on(t.responsavelId),
   index("leads_grupoId_idx").on(t.grupoId),
   index("leads_ultimaPublicacao_idx").on(t.ultimaPublicacao),

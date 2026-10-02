@@ -1,0 +1,1 @@
+CREATE INDEX `leads_status_ultimaPublicacao_idx` ON `leads` (`status`,`ultimaPublicacao`);
