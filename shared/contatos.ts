@@ -74,7 +74,7 @@ export function emailValido(email: string): boolean {
 
 /** Comparacao de nomes sem acento, caixa e espacos extras. */
 export function mesmoNome(a: string | null | undefined, b: string | null | undefined): boolean {
-  const n = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+  const n = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
   if (!a || !b) return false;
   return n(a) !== "" && n(a) === n(b);
 }
