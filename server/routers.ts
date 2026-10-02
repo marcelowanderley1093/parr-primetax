@@ -12,6 +12,24 @@ import { emailInput } from "./localUsersHelpers";
 import { buildGoogleCalendarAuthUrl, getGoogleCalendarRedirectUri, getPublicBaseUrl } from "./googleCalendar";
 import { sendActivationEmail } from "./_core/activationEmail";
 import { randomBytes } from "node:crypto";
+import { STATUS_CONTATO, cpfValido, digitos, emailValido, normalizarTelefone } from "@shared/contatos";
+
+// CPF opcional: "" limpa (null); qualquer outro valor precisa ter digito verificador valido.
+const cpfInput = z
+  .string()
+  .transform(v => digitos(v))
+  .refine(v => v === "" || cpfValido(v), { message: "CPF inválido (confira os dígitos)" });
+
+/** Valida e normaliza o valor de um contato conforme o tipo. Lanca BAD_REQUEST com mensagem para o usuario. */
+function normalizarValorContato(tipo: "telefone" | "email", valor: string): string {
+  if (tipo === "telefone") {
+    const t = normalizarTelefone(valor);
+    if (!t) throw new TRPCError({ code: "BAD_REQUEST", message: "Telefone inválido: informe DDD + número (10 ou 11 dígitos)" });
+    return t;
+  }
+  if (!emailValido(valor)) throw new TRPCError({ code: "BAD_REQUEST", message: "E-mail inválido" });
+  return valor.trim().toLowerCase();
+}
 
 const leadInputSchema = z.object({
   nome: z.string().min(2, "Nome é obrigatório"),
@@ -214,6 +232,7 @@ export const appRouter = router({
       cnpj: z.string().optional(),
       devedorPrincipal: z.string().optional(),
       valorDivida: z.string().optional(),
+      cpf: cpfInput.optional(),
     })).mutation(async ({ input }) => {
       const { id, ...data } = input;
       const cleanData: Record<string, string | null> = {};
@@ -474,6 +493,60 @@ export const appRouter = router({
   }),
 
   // Local Users management (admin creates users with email/password)
+  // Contatos do lead (lead_contatos): qualquer usuario logado le e edita (decisao 02/10/2026).
+  // Cada escrita grava quem alterou (users.id + nome). Telefone so digitos, sem DDI.
+  contatos: router({
+    list: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input }) => {
+      return db.getLeadContatos(input.leadId);
+    }),
+
+    create: protectedProcedure.input(z.object({
+      leadId: z.number(),
+      pessoaNome: z.string().trim().max(255).optional(),
+      pessoaCpf: cpfInput.optional(),
+      tipo: z.enum(["telefone", "email"]),
+      valor: z.string().min(1).max(320),
+      observacao: z.string().max(2000).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const valor = normalizarValorContato(input.tipo, input.valor);
+      const lead = await db.getLeadById(input.leadId);
+      if (!lead) throw new TRPCError({ code: "NOT_FOUND", message: "Lead não encontrado" });
+      const id = await db.createLeadContato({
+        leadId: input.leadId,
+        pessoaNome: input.pessoaNome || null,
+        pessoaCpf: input.pessoaCpf || null,
+        tipo: input.tipo,
+        valor,
+        origem: "manual",
+        observacao: input.observacao?.trim() || null,
+        atualizadoPorUserId: ctx.user.id,
+        atualizadoPorNome: ctx.user.name || "Admin",
+      });
+      return { id };
+    }),
+
+    update: protectedProcedure.input(z.object({
+      id: z.number(),
+      status: z.enum(STATUS_CONTATO).optional(),
+      observacao: z.string().max(2000).optional(),
+      valor: z.string().min(1).max(320).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      const atual = await db.getLeadContatoById(input.id);
+      if (!atual) throw new TRPCError({ code: "NOT_FOUND", message: "Contato não encontrado" });
+      return db.updateLeadContato(input.id, {
+        ...(input.status !== undefined && { status: input.status }),
+        ...(input.observacao !== undefined && { observacao: input.observacao.trim() || null }),
+        ...(input.valor !== undefined && { valor: normalizarValorContato(atual.tipo, input.valor) }),
+        atualizadoPorUserId: ctx.user.id,
+        atualizadoPorNome: ctx.user.name || "Admin",
+      });
+    }),
+
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ input }) => {
+      return db.deleteLeadContato(input.id);
+    }),
+  }),
+
   localUsers: router({
     list: adminProcedure.query(async () => {
       const rows = await db.getAllLocalUsers();

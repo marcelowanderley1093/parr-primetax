@@ -22,12 +22,14 @@ import {
   Save,
   X,
   Trash2,
-  Users,
+  IdCard,
+  Copy,
 } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
-import { parseSocios, whatsappDigits } from "@/lib/socios";
+import ContatosCard from "@/components/ContatosCard";
+import { cpfValido, digitos, formatarCpf } from "@shared/contatos";
 
 function formatCurrency(value: string | null): string {
   if (!value) return "";
@@ -60,12 +62,10 @@ export default function LeadDetail() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarMode, setCalendarMode] = useState<"create" | "reschedule" | "cancel">("create");
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ nome: "", email: "", telefone: "", cnpj: "", devedorPrincipal: "", valorDivida: "" });
+  const [editForm, setEditForm] = useState({ nome: "", email: "", telefone: "", cnpj: "", devedorPrincipal: "", valorDivida: "", cpf: "" });
 
   const utils = trpc.useUtils();
   const { data: lead, isLoading: leadLoading } = trpc.leads.getById.useQuery({ id: leadId }, { enabled: !!user && leadId > 0 });
-  // telefoneSocios e somente-leitura: nenhuma rota grava; parser puro em @/lib/socios
-  const socios = parseSocios(lead?.telefoneSocios);
   const { data: notes = [], isLoading: notesLoading } = trpc.leads.getNotes.useQuery({ leadId }, { enabled: !!user && leadId > 0 });
   const { data: history = [], isLoading: historyLoading } = trpc.leads.getHistory.useQuery({ leadId }, { enabled: !!user && leadId > 0 });
 
@@ -112,11 +112,18 @@ export default function LeadDetail() {
       cnpj: lead.cnpj || "",
       devedorPrincipal: (lead as any).devedorPrincipal || "",
       valorDivida: lead.valorDivida || "",
+      cpf: lead.cpf ? formatarCpf(lead.cpf) : "",
     });
     setEditing(true);
   };
 
   const saveEdit = () => {
+    // CPF: vazio limpa; preenchido precisa de digito verificador valido (o servidor valida de novo).
+    const cpf = digitos(editForm.cpf);
+    if (cpf && !cpfValido(cpf)) {
+      toast.error("CPF inválido: confira os dígitos.");
+      return;
+    }
     updateLead.mutate({
       id: leadId,
       nome: editForm.nome,
@@ -125,6 +132,7 @@ export default function LeadDetail() {
       cnpj: editForm.cnpj || undefined,
       devedorPrincipal: editForm.devedorPrincipal || undefined,
       valorDivida: editForm.valorDivida || undefined,
+      cpf,
     });
   };
 
@@ -202,6 +210,7 @@ export default function LeadDetail() {
                 <div className="space-y-3">
                   <div><label className="text-xs text-muted-foreground">Nome (Dev. Solidário)</label><Input value={editForm.nome} onChange={e => setEditForm(f => ({...f, nome: e.target.value}))} className="h-8 text-sm" /></div>
                   <div><label className="text-xs text-muted-foreground">E-mail</label><Input value={editForm.email} onChange={e => setEditForm(f => ({...f, email: e.target.value}))} className="h-8 text-sm" /></div>
+                  <div><label className="text-xs text-muted-foreground">CPF</label><Input value={editForm.cpf} placeholder="000.000.000-00" onChange={e => setEditForm(f => ({...f, cpf: e.target.value}))} className="h-8 text-sm" /></div>
                   <div><label className="text-xs text-muted-foreground">Telefone</label><Input value={editForm.telefone} onChange={e => setEditForm(f => ({...f, telefone: e.target.value}))} className="h-8 text-sm" /></div>
                   <div><label className="text-xs text-muted-foreground">CNPJ</label><Input value={editForm.cnpj} onChange={e => setEditForm(f => ({...f, cnpj: e.target.value}))} className="h-8 text-sm" /></div>
                   <div><label className="text-xs text-muted-foreground">Devedor Principal</label><Input value={editForm.devedorPrincipal} onChange={e => setEditForm(f => ({...f, devedorPrincipal: e.target.value}))} className="h-8 text-sm" /></div>
@@ -214,6 +223,24 @@ export default function LeadDetail() {
                     <div>
                       <div className="text-xs text-muted-foreground">Nome (Dev. Solidário)</div>
                       <div className="font-medium text-sm">{lead.nome}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <IdCard className="h-4 w-4 text-muted-foreground mt-0.5" />
+                    <div>
+                      <div className="text-xs text-muted-foreground">CPF</div>
+                      {lead.cpf ? (
+                        <div className="font-medium text-sm flex items-center gap-1.5">
+                          {formatarCpf(lead.cpf)}
+                          <button title="Copiar CPF" className="text-muted-foreground hover:text-foreground"
+                            onClick={() => { navigator.clipboard.writeText(lead.cpf!).then(() => toast.success("CPF copiado.")); }}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                          {!cpfValido(lead.cpf) && <span className="text-xs font-normal text-amber-700">(CPF inválido)</span>}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">Não informado</div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
@@ -268,42 +295,7 @@ export default function LeadDetail() {
               )}
             </div>
 
-            {/* Socios Card (oculto quando nao ha socios validos) */}
-            {socios.length > 0 && (
-              <div className="bg-white rounded-xl border border-border p-6">
-                <h2 className="font-bold text-lg mb-4 flex items-center gap-2">
-                  <Users className="h-5 w-5 text-primary" /> Sócios
-                </h2>
-                <div className="space-y-4">
-                  {socios.map((socio, index) => (
-                    <div key={`${socio.nome}-${index}`} className="border-l-2 border-primary/30 pl-3">
-                      <div className="text-xs text-muted-foreground">Sócio {index + 1}</div>
-                      <div className="font-medium text-sm flex items-center gap-2">
-                        <User className="h-4 w-4 text-muted-foreground" /> {socio.nome}
-                      </div>
-                      {socio.cpf && (
-                        <div className="text-xs text-muted-foreground mt-0.5">CPF: {socio.cpf}</div>
-                      )}
-                      {socio.telefones.length > 0 && (
-                        <div className="mt-1 space-y-1">
-                          {socio.telefones.map((tel) => (
-                            <a
-                              key={tel}
-                              href={`https://wa.me/${whatsappDigits(tel)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-2 text-sm text-primary hover:underline"
-                            >
-                              <Phone className="h-3.5 w-3.5" /> {tel}
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <ContatosCard leadId={leadId} nomeLead={lead.nome} />
 
             {/* Status Card */}
             <div className="bg-white rounded-xl border border-border p-6">
