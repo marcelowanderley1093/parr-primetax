@@ -1,6 +1,6 @@
-import { eq, desc, asc, inArray, sql, getTableColumns } from "drizzle-orm";
+import { eq, desc, asc, inArray, sql, getTableColumns, and, isNull, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers, leadContatos, empresas } from "../drizzle/schema";
+import { InsertUser, users, leads, leadNotes, leadStatusHistory, siteSettings, leadImports, localUsers, leadContatos, empresas, leadProcedimentos, editais } from "../drizzle/schema";
 import type { InsertLead, InsertLeadNote, InsertLeadStatusHistory, InsertLeadImport, InsertLocalUser, InsertLeadContato, InsertEmpresa } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -84,14 +84,91 @@ export async function createLead(data: InsertLead) {
   return insertId;
 }
 
-// Kanban: todas as colunas MENOS dados pessoais que a listagem nao usa (CPF do lead e o JSON legado
-// de socios, que traz CPFs). O detalhe (getLeadById) continua trazendo tudo.
-const { cpf: _cpf, telefoneSocios: _telefoneSocios, ...colunasListagem } = getTableColumns(leads);
+// ==================== KANBAN PAGINADO (base de editais: ~340 mil leads) ====================
 
-export async function getAllLeads() {
+export const STATUS_LEAD = ["novo_lead", "contato_inicial", "reuniao_agendada", "proposta_enviada"] as const;
+export type StatusLead = (typeof STATUS_LEAD)[number];
+
+/** Escapa % e _ para LIKE. */
+const escLike = (s: string) => s.replace(/[\\%_]/g, c => "\\" + c);
+
+/**
+ * Condicao de busca do Kanban. Numeros (6+ digitos, sem letras): prefixo do CNPJ ou numero exato do procedimento.
+ * Texto: trecho do nome do socio intimado, da empresa (devedor principal) ou do e-mail.
+ */
+export function condicaoBusca(busca: string | undefined): SQL | undefined {
+  const t = (busca ?? "").trim();
+  if (!t) return undefined;
+  const d = t.replace(/\D/g, "");
+  if (!/[A-Za-zÀ-ÿ]/.test(t) && d.length >= 6) {
+    return sql`(REPLACE(REPLACE(REPLACE(${leads.cnpj}, '.', ''), '/', ''), '-', '') LIKE ${`${d}%`}
+      OR EXISTS (SELECT 1 FROM lead_procedimentos p WHERE p.leadId = ${leads.id} AND p.numeroProcedimento = ${d}))`;
+  }
+  const like = `%${escLike(t)}%`;
+  return sql`(${leads.nome} LIKE ${like} OR ${leads.devedorPrincipal} LIKE ${like} OR ${leads.email} LIKE ${like})`;
+}
+
+const colunasCard = {
+  id: leads.id,
+  nome: leads.nome,
+  email: leads.email,
+  telefone: leads.telefone,
+  cnpj: leads.cnpj,
+  devedorPrincipal: leads.devedorPrincipal,
+  valorDivida: leads.valorDivida,
+  status: leads.status,
+  createdAt: leads.createdAt,
+  ultimaPublicacao: leads.ultimaPublicacao,
+  empresaSituacao: empresas.situacaoCadastral,
+  empresaDividaCentavos: empresas.totalDividasCentavos,
+};
+
+/** Uma pagina de uma coluna do Kanban (arquivados ficam de fora). */
+export async function listarColuna(status: StatusLead, busca: string | undefined, offset: number, limite: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const where = and(eq(leads.status, status), isNull(leads.arquivadoEm), condicaoBusca(busca));
+  // Novo Lead: edital mais recente primeiro (prazo de impugnacao correndo). Demais: ultima movimentacao primeiro.
+  const ordem = status === "novo_lead" ? [desc(leads.ultimaPublicacao), desc(leads.id)] : [desc(leads.updatedAt), desc(leads.id)];
+  const [itens, total] = await Promise.all([
+    db.select(colunasCard).from(leads).leftJoin(empresas, eq(empresas.id, leads.empresaId)).where(where).orderBy(...ordem).limit(limite).offset(offset),
+    db.select({ n: sql<number>`COUNT(*)` }).from(leads).where(where),
+  ]);
+  return { itens, total: Number(total[0]?.n ?? 0) };
+}
+
+/** Total por coluna (para o cabecalho do Kanban). */
+export async function contarPorStatus(busca: string | undefined): Promise<Record<StatusLead, number>> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db
+    .select({ status: leads.status, n: sql<number>`COUNT(*)` })
+    .from(leads)
+    .where(and(isNull(leads.arquivadoEm), condicaoBusca(busca)))
+    .groupBy(leads.status);
+  const out = Object.fromEntries(STATUS_LEAD.map(s => [s, 0])) as Record<StatusLead, number>;
+  for (const r of rows) out[r.status as StatusLead] = Number(r.n);
+  return out;
+}
+
+/** Procedimentos do lead com o edital de cada um, do mais recente para o mais antigo. */
+export async function getProcedimentosDoLead(leadId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select(colunasListagem).from(leads).orderBy(desc(leads.createdAt));
+  return db
+    .select({
+      id: leadProcedimentos.id,
+      numeroProcedimento: leadProcedimentos.numeroProcedimento,
+      cpfParcial: leadProcedimentos.cpfParcial,
+      pagina: leadProcedimentos.pagina,
+      editalAno: editais.ano,
+      editalNumero: editais.numero,
+      dataPublicacao: editais.dataPublicacao,
+    })
+    .from(leadProcedimentos)
+    .innerJoin(editais, eq(editais.id, leadProcedimentos.editalId))
+    .where(eq(leadProcedimentos.leadId, leadId))
+    .orderBy(desc(editais.dataPublicacao), desc(leadProcedimentos.id));
 }
 
 export async function getLeadById(id: number) {
@@ -143,6 +220,7 @@ export async function deleteLead(id: number): Promise<void> {
   await db.delete(leadNotes).where(eq(leadNotes.leadId, id));
   await db.delete(leadStatusHistory).where(eq(leadStatusHistory.leadId, id));
   await db.delete(leadContatos).where(eq(leadContatos.leadId, id));
+  await db.delete(leadProcedimentos).where(eq(leadProcedimentos.leadId, id));
   await db.delete(leads).where(eq(leads.id, id));
 }
 
@@ -367,6 +445,7 @@ export async function deleteImportBatch(batchId: number): Promise<number> {
       await db.delete(leadNotes).where(eq(leadNotes.leadId, lid));
       await db.delete(leadStatusHistory).where(eq(leadStatusHistory.leadId, lid));
       await db.delete(leadContatos).where(eq(leadContatos.leadId, lid));
+      await db.delete(leadProcedimentos).where(eq(leadProcedimentos.leadId, lid));
     }
     // Delete leads
     await db.delete(leads).where(eq(leads.importBatchId, batchId));
