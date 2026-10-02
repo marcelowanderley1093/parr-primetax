@@ -26,7 +26,7 @@ export default function CalendarModal({ leadId, mode = "create", existingEventId
   const scheduleEvent = trpc.leads.scheduleEvent.useMutation({
     onSuccess: () => {
       toast.success("Reunião agendada com sucesso!");
-      utils.leads.list.invalidate();
+      utils.leads.coluna.invalidate(); utils.leads.contagem.invalidate();
       utils.leads.getCalendarEvents.invalidate();
       if (leadId) utils.leads.getById.invalidate({ id: leadId });
       onClose();
@@ -39,7 +39,7 @@ export default function CalendarModal({ leadId, mode = "create", existingEventId
   const rescheduleEvent = trpc.leads.rescheduleEvent.useMutation({
     onSuccess: () => {
       toast.success("Reunião remarcada com sucesso!");
-      utils.leads.list.invalidate();
+      utils.leads.coluna.invalidate(); utils.leads.contagem.invalidate();
       utils.leads.getCalendarEvents.invalidate();
       if (leadId) utils.leads.getById.invalidate({ id: leadId });
       onClose();
@@ -52,7 +52,7 @@ export default function CalendarModal({ leadId, mode = "create", existingEventId
   const cancelEvent = trpc.leads.cancelEvent.useMutation({
     onSuccess: () => {
       toast.success("Reunião cancelada com sucesso!");
-      utils.leads.list.invalidate();
+      utils.leads.coluna.invalidate(); utils.leads.contagem.invalidate();
       utils.leads.getCalendarEvents.invalidate();
       if (leadId) utils.leads.getById.invalidate({ id: leadId });
       onClose();
