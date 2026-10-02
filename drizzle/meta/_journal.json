@@ -85,6 +85,13 @@
       "when": 1790973082745,
       "tag": "0011_indice_kanban_status_publicacao",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1790976805336,
+      "tag": "0012_carteiras_eventos",
+      "breakpoints": true
     }
   ]
 }

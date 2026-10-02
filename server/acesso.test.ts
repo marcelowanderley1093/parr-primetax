@@ -73,11 +73,18 @@ describe("rotas com acesso por dono", () => {
 
   it("Kanban: parceiro consulta so a propria carteira; admin sem filtro", async () => {
     await caller("comercial").leads.coluna({ status: "novo_lead" });
-    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, 10);
+    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, { responsavelId: 10, arquivados: false });
+    // parceiro pedindo a carteira de outro (20) continua preso a propria
+    await caller("comercial").leads.coluna({ status: "novo_lead", visao: 20 });
+    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, { responsavelId: 10, arquivados: false });
     await caller("admin").leads.coluna({ status: "novo_lead" });
-    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, undefined);
-    await caller("comercial").leads.contagem({});
-    expect(db.contarPorStatus).toHaveBeenLastCalledWith(undefined, 10);
+    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, {});
+    await caller("admin").leads.coluna({ status: "novo_lead", visao: 20 });
+    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, { responsavelId: 20 });
+    await caller("admin").leads.coluna({ status: "novo_lead", visao: "livres" });
+    expect(db.listarColuna).toHaveBeenLastCalledWith("novo_lead", undefined, 0, 50, { livres: true });
+    await caller("comercial").leads.contagem({ visao: "arquivados" });
+    expect(db.contarPorStatus).toHaveBeenLastCalledWith(undefined, { responsavelId: 10, arquivados: true });
   });
 
   it("cancelar evento: o evento tem de ser o do proprio lead", async () => {

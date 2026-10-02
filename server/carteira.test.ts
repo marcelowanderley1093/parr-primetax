@@ -1,0 +1,136 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
+import type { TrpcContext } from "./_core/context";
+import { limparFiltro, parseCnaeDivisoes, usaEmpresa } from "../shared/carteira";
+
+// Banco simulado: lead 1 e do parceiro 10; lead 2 do parceiro 20. Parceiros ativos: 10 e 20.
+const DONOS: Record<number, number | null> = { 1: 10, 2: 20 };
+vi.mock("./db", async importOriginal => {
+  const real = await importOriginal<typeof import("./db")>();
+  return { ...real, getResponsavelDoLead: vi.fn(async (id: number) => (id in DONOS ? { responsavelId: DONOS[id] } : undefined)) };
+});
+vi.mock("./carteira", async importOriginal => {
+  const real = await importOriginal<typeof import("./carteira")>();
+  return {
+    ...real,
+    ehParceiroAtivo: vi.fn(async (id: number) => id === 10 || id === 20),
+    atribuir: vi.fn(async () => ({ grupos: 1, leads: 2 })),
+    devolver: vi.fn(async () => ({ leads: 2 })),
+    arquivar: vi.fn(async () => undefined),
+    reabrir: vi.fn(async () => undefined),
+    transferir: vi.fn(async () => ({ leads: 2 })),
+    parceiros: vi.fn(async () => []),
+    carteiraDoLead: vi.fn(async (leadId: number) => ({
+      responsavelId: DONOS[leadId], responsavelNome: "Parceiro", atribuidoEm: null, arquivadoEm: null, arquivadoMotivo: null, grupoId: 5, leadsNoGrupo: 2,
+      eventos: [
+        { id: 1, leadId, tipo: "transferido", deResponsavelId: 20, paraResponsavelId: 10, motivo: null, usuarioId: 1, usuarioNome: "Admin Real", createdAt: new Date() },
+        { id: 2, leadId, tipo: "arquivado", deResponsavelId: null, paraResponsavelId: null, motivo: "sem_interesse", usuarioId: 10, usuarioNome: "Eu Parceiro", createdAt: new Date() },
+      ],
+    })),
+  };
+});
+
+const carteira = await import("./carteira");
+const { appRouter } = await import("./routers");
+
+function caller(role: "admin" | "comercial", localId = role === "admin" ? 1 : 10) {
+  const user: NonNullable<TrpcContext["user"]> = {
+    id: 99, openId: `local-${localId}`, email: "u@exemplo.test", name: role === "admin" ? "Admin" : "Eu Parceiro", loginMethod: "local",
+    role, createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
+  };
+  return appRouter.createCaller({ user, req: { protocol: "https", headers: {}, get: () => "x" } as any, res: { clearCookie: () => {} } as any });
+}
+
+beforeEach(() => vi.clearAllMocks());
+
+describe("regras do filtro (shared/carteira)", () => {
+  it("parseCnaeDivisoes pega 2 digitos de cada item, sem repetir", () => {
+    expect(parseCnaeDivisoes("86, 47 ;8610  41-2")).toEqual(["86", "47", "41"]);
+    expect(parseCnaeDivisoes("")).toEqual([]);
+  });
+
+  it("limparFiltro remove campos vazios; usaEmpresa so com criterio da EmpresAqui", () => {
+    expect(limparFiltro({ situacoes: [], dividaMin: null, ufs: [], publicacaoDe: "", somentePrazoAberto: false })).toEqual({});
+    expect(usaEmpresa({ publicacaoDe: "2026-01-01" })).toBe(false);
+    expect(usaEmpresa({ dividaMin: 0 })).toBe(true);
+  });
+});
+
+describe("condicaoFiltro (SQL)", () => {
+  const dialect = new MySqlDialect();
+  const q = (f: Parameters<typeof carteira.condicaoFiltro>[0]) => {
+    const c = carteira.condicaoFiltro(f, "2026-10-02");
+    return c ? dialect.sqlToQuery(c) : undefined;
+  };
+
+  it("sem criterio -> sem condicao", () => {
+    expect(q({})).toBeUndefined();
+  });
+
+  it("criterios da empresa exigem empresa vinculada; divida em centavos", () => {
+    const r = q({ situacoes: ["ATIVA", "SUSPENSA"], dividaMin: 100000, dividaMax: 2500000.5, ufs: ["SP"], cnaeDivisoes: ["86"] })!;
+    expect(r.sql).toMatch(/empresaId` IS NOT NULL/);
+    expect(r.sql).toMatch(/LEFT\(/);
+    expect(r.params).toEqual(["ATIVA", "SUSPENSA", 10000000, 250000050, "SP", "86"]);
+  });
+
+  it("incluir leads sem EmpresAqui vira OU empresaId nulo", () => {
+    expect(q({ situacoes: ["ATIVA"], incluirSemEmpresa: true })!.sql).toMatch(/OR `leads`\.`empresaId` IS NULL/);
+  });
+
+  it("prazo aberto = publicacao nos ultimos 30 dias; periodo de publicacao", () => {
+    expect(q({ somentePrazoAberto: true })!.params).toEqual(["2026-09-02"]);
+    expect(q({ publicacaoDe: "2026-01-01", publicacaoAte: "2026-06-30" })!.params).toEqual(["2026-01-01", "2026-06-30"]);
+  });
+});
+
+describe("rotas da carteira: permissoes", () => {
+  it("parceiro nao distribui, nao transfere, nao reabre nem ve a lista de parceiros", async () => {
+    const p = caller("comercial");
+    await expect(p.carteira.parceiros()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(p.carteira.atribuir({ responsavelId: 10, filtro: {}, maxGrupos: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(p.carteira.transferir({ leadId: 1, para: 20 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(p.carteira.reabrir({ leadId: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(p.carteira.previa({ filtro: {} })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("parceiro devolve e arquiva so o que e dele", async () => {
+    const p = caller("comercial");
+    await expect(p.carteira.devolver({ leadId: 1 })).resolves.toEqual({ leads: 2 });
+    await expect(p.carteira.devolver({ leadId: 2 })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(p.carteira.arquivar({ leadId: 2, motivo: "sem_interesse" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(p.carteira.arquivar({ leadId: 1, motivo: "sem_interesse" })).resolves.toEqual({ success: true });
+    expect(carteira.arquivar).toHaveBeenCalledWith(1, "sem_interesse", null, { localUserId: 10, nome: "Eu Parceiro" });
+  });
+
+  it("arquivar com motivo 'outro' exige descricao; motivo fora da lista e recusado", async () => {
+    const p = caller("comercial");
+    await expect(p.carteira.arquivar({ leadId: 1, motivo: "outro" })).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Descreva o motivo do arquivamento" });
+    await expect(p.carteira.arquivar({ leadId: 1, motivo: "outro", detalhe: "mudou de ramo" })).resolves.toEqual({ success: true });
+    await expect(p.carteira.arquivar({ leadId: 1, motivo: "qualquer" as any })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("admin so atribui/transfere para parceiro ativo; para = null devolve a fila", async () => {
+    const a = caller("admin");
+    await expect(a.carteira.atribuir({ responsavelId: 99, filtro: {}, maxGrupos: 10 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.atribuir({ responsavelId: 10, filtro: { ufs: ["SP"] }, maxGrupos: 10 })).resolves.toEqual({ grupos: 1, leads: 2 });
+    await expect(a.carteira.transferir({ leadId: 1, para: 99 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.transferir({ leadId: 1, para: null })).resolves.toEqual({ leads: 2 });
+  });
+
+  it("filtro invalido e recusado (UF, CNAE, data, limite de grupos)", async () => {
+    const a = caller("admin");
+    await expect(a.carteira.previa({ filtro: { ufs: ["XX"] } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.previa({ filtro: { cnaeDivisoes: ["8"] } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.previa({ filtro: { publicacaoDe: "01/01/2026" } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.atribuir({ responsavelId: 10, filtro: {}, maxGrupos: 20001 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("historico: parceiro nao ve nomes nem ids de outros parceiros; admin ve tudo", async () => {
+    const p = await caller("comercial").carteira.doLead({ leadId: 1 });
+    expect(p!.eventos.map(e => e.usuarioNome)).toEqual(["Primetax", "Eu Parceiro"]);
+    expect(p!.eventos.every(e => e.deResponsavelId === null && e.paraResponsavelId === null)).toBe(true);
+    const a = await caller("admin").carteira.doLead({ leadId: 1 });
+    expect(a!.eventos[0]).toMatchObject({ usuarioNome: "Admin Real", deResponsavelId: 20 });
+  });
+});

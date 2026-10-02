@@ -21,6 +21,21 @@ export function responsavelDoEscopo(user: Usuario): number | undefined {
   return parseLocalOpenId(user.openId) ?? -1;
 }
 
+export type VisaoPedida = "todos" | "livres" | "arquivados" | number | undefined;
+
+/**
+ * Visao efetiva do Kanban. Parceiro: sempre a propria carteira (pode alternar para os proprios arquivados).
+ * Admin: todos, livres (sem dono), arquivados ou a carteira de um parceiro (numero = local_users.id).
+ */
+export function visaoKanban(user: Usuario, pedida: VisaoPedida): db.VisaoKanban {
+  const proprio = responsavelDoEscopo(user);
+  if (proprio !== undefined) return { responsavelId: proprio, arquivados: pedida === "arquivados" };
+  if (pedida === "livres") return { livres: true };
+  if (pedida === "arquivados") return { arquivados: true };
+  if (typeof pedida === "number") return { responsavelId: pedida };
+  return {};
+}
+
 /** Pode acessar o lead? Admin sempre; parceiro so se for o responsavel. */
 export function podeAcessar(user: Usuario, responsavelId: number | null | undefined): boolean {
   const escopo = responsavelDoEscopo(user);

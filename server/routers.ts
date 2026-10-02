@@ -15,8 +15,38 @@ import { sendActivationEmail } from "./_core/activationEmail";
 import { randomBytes } from "node:crypto";
 import { STATUS_CONTATO, cpfValido, digitos, emailValido, normalizarTelefone } from "@shared/contatos";
 import { LayoutInvalidoError, parseEmpresaquiCsv } from "./empresaqui/parserCsv";
-import { LEAD_NAO_ENCONTRADO, exigirAcessoLead, responsavelDoEscopo } from "./acesso";
+import { LEAD_NAO_ENCONTRADO, exigirAcessoLead, responsavelDoEscopo, visaoKanban } from "./acesso";
+import * as carteira from "./carteira";
+import { MOTIVOS_ARQUIVAMENTO, SITUACOES_CADASTRAIS, UFS, limparFiltro } from "@shared/carteira";
+import { parseLocalOpenId } from "./localUsersHelpers";
 import { ArquivoInvalidoError, contarLeadsPorCnpj, decodificarArquivo, linhaEmpresa, resumirImportacao } from "./empresaqui/importacao";
+
+// Filtro de carteira (shared/carteira.ts). Datas ISO; divida em reais.
+const dataIso = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const filtroInput = z.object({
+  situacoes: z.array(z.enum(SITUACOES_CADASTRAIS)).optional(),
+  dividaMin: z.number().min(0).nullable().optional(),
+  dividaMax: z.number().min(0).nullable().optional(),
+  ufs: z.array(z.string().refine(u => UFS.includes(u), { message: "UF invalida" })).optional(),
+  cnaeDivisoes: z.array(z.string().regex(/^\d{2}$/)).max(99).optional(),
+  publicacaoDe: dataIso.nullable().optional(),
+  publicacaoAte: dataIso.nullable().optional(),
+  somentePrazoAberto: z.boolean().optional(),
+  incluirSemEmpresa: z.boolean().optional(),
+}).transform(limparFiltro);
+
+/** Data de hoje no Brasil (o servidor roda em UTC). */
+const hojeBrasil = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date());
+
+/** Quem esta agindo, para a trilha de eventos (local_users.id + nome). */
+const atorDe = (user: NonNullable<TrpcContext["user"]>): carteira.Ator => ({ localUserId: parseLocalOpenId(user.openId), nome: user.name || "Admin" });
+
+async function exigirParceiroAtivo(id: number) {
+  if (!(await carteira.ehParceiroAtivo(id))) throw new TRPCError({ code: "BAD_REQUEST", message: "Parceiro inexistente, inativo ou sem perfil comercial" });
+}
+
+// Visao do Kanban pedida pela tela (o servidor restringe o parceiro a propria carteira; ver acesso.visaoKanban).
+const visaoInput = z.union([z.enum(["todos", "livres", "arquivados"]), z.number().int().positive()]).optional();
 
 const arquivoCsvInput = z.object({
   fileName: z.string().max(255),
@@ -261,16 +291,17 @@ export const appRouter = router({
       busca: z.string().max(100).optional(),
       cursor: z.number().int().min(0).optional(), // offset
       limite: z.number().int().min(1).max(100).default(50),
+      visao: visaoInput,
     })).query(async ({ input, ctx }) => {
       const offset = input.cursor ?? 0;
-      const { itens, total } = await db.listarColuna(input.status, input.busca, offset, input.limite, responsavelDoEscopo(ctx.user));
+      const { itens, total } = await db.listarColuna(input.status, input.busca, offset, input.limite, visaoKanban(ctx.user, input.visao));
       const proximo = offset + itens.length < total ? offset + itens.length : null;
       return { itens, total, proximo };
     }),
 
     // Totais por coluna (cabecalho do Kanban), respeitando a busca.
-    contagem: protectedProcedure.input(z.object({ busca: z.string().max(100).optional() })).query(async ({ input, ctx }) => {
-      return db.contarPorStatus(input.busca, responsavelDoEscopo(ctx.user));
+    contagem: protectedProcedure.input(z.object({ busca: z.string().max(100).optional(), visao: visaoInput })).query(async ({ input, ctx }) => {
+      return db.contarPorStatus(input.busca, visaoKanban(ctx.user, input.visao));
     }),
 
     // Editais e procedimentos do lead.
@@ -678,6 +709,82 @@ export const appRouter = router({
     doLead: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
       await exigirAcessoLead(ctx.user, input.leadId);
       return db.getEmpresaDoLead(input.leadId);
+    }),
+  }),
+
+  // Carteiras de parceiros (Fase B2). Distribuir, transferir e reabrir: so admin. Devolver e arquivar: dono ou admin.
+  carteira: router({
+    parceiros: adminProcedure.query(async () => carteira.parceiros()),
+
+    filtroSalvo: adminProcedure.input(z.object({ responsavelId: z.number().int() })).query(async ({ input }) => {
+      return carteira.getFiltroSalvo(input.responsavelId);
+    }),
+
+    salvarFiltro: adminProcedure.input(z.object({ responsavelId: z.number().int(), filtro: filtroInput })).mutation(async ({ input, ctx }) => {
+      await exigirParceiroAtivo(input.responsavelId);
+      await carteira.salvarFiltro(input.responsavelId, input.filtro, atorDe(ctx.user));
+      return { success: true };
+    }),
+
+    previa: adminProcedure.input(z.object({ filtro: filtroInput })).query(async ({ input }) => {
+      return carteira.previaDistribuicao(input.filtro, hojeBrasil());
+    }),
+
+    atribuir: adminProcedure.input(z.object({
+      responsavelId: z.number().int(),
+      filtro: filtroInput,
+      maxGrupos: z.number().int().min(1).max(20000),
+    })).mutation(async ({ input, ctx }) => {
+      await exigirParceiroAtivo(input.responsavelId);
+      return carteira.atribuir(input.filtro, hojeBrasil(), input.responsavelId, input.maxGrupos, atorDe(ctx.user));
+    }),
+
+    previaCompletar: adminProcedure.query(async () => carteira.previaCompletar()),
+
+    completar: adminProcedure.mutation(async ({ ctx }) => carteira.completarGrupos(atorDe(ctx.user))),
+
+    doLead: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
+      const c = await carteira.carteiraDoLead(input.leadId);
+      if (!c || ctx.user.role === "admin") return c;
+      // Parceiro nao ve quem sao os outros parceiros: eventos de terceiros aparecem como "Primetax".
+      const eu = parseLocalOpenId(ctx.user.openId);
+      return {
+        ...c,
+        eventos: c.eventos.map(e => ({
+          ...e,
+          deResponsavelId: null,
+          paraResponsavelId: null,
+          usuarioNome: e.usuarioId === eu ? e.usuarioNome : "Primetax",
+        })),
+      };
+    }),
+
+    devolver: protectedProcedure.input(z.object({ leadId: z.number(), motivo: z.string().max(300).optional() })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
+      return carteira.devolver(input.leadId, atorDe(ctx.user), input.motivo?.trim() || null);
+    }),
+
+    arquivar: protectedProcedure.input(z.object({
+      leadId: z.number(),
+      motivo: z.enum(Object.keys(MOTIVOS_ARQUIVAMENTO) as [keyof typeof MOTIVOS_ARQUIVAMENTO, ...(keyof typeof MOTIVOS_ARQUIVAMENTO)[]]),
+      detalhe: z.string().max(300).optional(),
+    })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
+      const detalhe = input.detalhe?.trim() || null;
+      if (input.motivo === "outro" && !detalhe) throw new TRPCError({ code: "BAD_REQUEST", message: "Descreva o motivo do arquivamento" });
+      await carteira.arquivar(input.leadId, input.motivo, detalhe, atorDe(ctx.user));
+      return { success: true };
+    }),
+
+    reabrir: adminProcedure.input(z.object({ leadId: z.number() })).mutation(async ({ input, ctx }) => {
+      await carteira.reabrir(input.leadId, atorDe(ctx.user));
+      return { success: true };
+    }),
+
+    transferir: adminProcedure.input(z.object({ leadId: z.number(), para: z.number().int().nullable() })).mutation(async ({ input, ctx }) => {
+      if (input.para !== null) await exigirParceiroAtivo(input.para);
+      return carteira.transferir(input.leadId, input.para, atorDe(ctx.user));
     }),
   }),
 
