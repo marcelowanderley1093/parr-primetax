@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, bigint, json, index } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -43,9 +43,13 @@ export const leads = mysqlTable("leads", {
   telefoneSocios: text("telefoneSocios"),
   calendarEventId: varchar("calendarEventId", { length: 255 }),
   importBatchId: int("importBatchId"),
+  // Empresa (CNPJ) do edital; aponta para empresas.id (sem FK, como o resto do schema).
+  empresaId: int("empresaId"),
+  // CPF completo do socio intimado, so digitos. Vem de pesquisa manual (nem edital nem EmpresAqui trazem).
+  cpf: varchar("cpf", { length: 11 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, t => [index("leads_empresaId_idx").on(t.empresaId)]);
 
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = typeof leads.$inferInsert;
@@ -116,3 +120,75 @@ export const localUsers = mysqlTable("local_users", {
 
 export type LocalUser = typeof localUsers.$inferSelect;
 export type InsertLocalUser = typeof localUsers.$inferInsert;
+
+// Empresa (CNPJ) enriquecida pela EmpresAqui. Uma linha por CNPJ; varios leads podem apontar para ela.
+// EmpresAqui sobrescreve tudo aqui (dado oficial do CNPJ, inclusive telefone, que costuma ser do contador);
+// o contato do socio intimado fica em lead_contatos e nunca e tocado pela integracao.
+// Colunas soltas = so o que filtra/ordena no Kanban; o restante vive em `dados` (normalizado, fusao CSV + API)
+// e o original de cada fonte em `brutoCsv` / `brutoApi`.
+export const empresas = mysqlTable("empresas", {
+  id: int("id").autoincrement().primaryKey(),
+  cnpj: varchar("cnpj", { length: 14 }).notNull().unique(),
+  razaoSocial: varchar("razaoSocial", { length: 255 }),
+  nomeFantasia: varchar("nomeFantasia", { length: 255 }),
+  situacaoCadastral: varchar("situacaoCadastral", { length: 20 }),
+  regimeTributario: varchar("regimeTributario", { length: 60 }),
+  porte: varchar("porte", { length: 40 }),
+  cnaePrincipal: varchar("cnaePrincipal", { length: 7 }),
+  uf: varchar("uf", { length: 2 }),
+  municipio: varchar("municipio", { length: 120 }),
+  totalDividasCentavos: bigint("totalDividasCentavos", { mode: "number" }),
+  qtdInscricoes: int("qtdInscricoes"),
+  dados: json("dados"),
+  brutoCsv: json("brutoCsv"),
+  brutoApi: json("brutoApi"),
+  csvAtualizadoEm: timestamp("csvAtualizadoEm"),
+  apiAtualizadoEm: timestamp("apiAtualizadoEm"),
+  // Sincronizacao pela API: null = nunca pedida.
+  syncStatus: mysqlEnum("syncStatus", ["pendente", "ok", "nao_encontrado", "erro"]),
+  syncErro: varchar("syncErro", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, t => [index("empresas_syncStatus_idx").on(t.syncStatus)]);
+
+export type Empresa = typeof empresas.$inferSelect;
+export type InsertEmpresa = typeof empresas.$inferInsert;
+
+// Contatos editaveis pelo comercial: uma linha por telefone ou e-mail. Substitui leads.telefoneSocios
+// (JSON somente leitura). pessoaNome/pessoaCpf identificam de quem e o contato: o socio intimado ou
+// outro socio da mesma empresa. atualizadoPorUserId aponta para users.id (como lead_notes.userId).
+export const leadContatos = mysqlTable("lead_contatos", {
+  id: int("id").autoincrement().primaryKey(),
+  leadId: int("leadId").notNull(),
+  pessoaNome: varchar("pessoaNome", { length: 255 }),
+  pessoaCpf: varchar("pessoaCpf", { length: 11 }),
+  tipo: mysqlEnum("tipo", ["telefone", "email"]).notNull(),
+  valor: varchar("valor", { length: 320 }).notNull(),
+  origem: mysqlEnum("origem", ["edital", "manual", "empresaqui", "base_anterior"]).notNull(),
+  status: mysqlEnum("status", ["nao_testado", "atende", "whatsapp", "numero_errado", "nao_e_o_socio"])
+    .notNull()
+    .default("nao_testado"),
+  observacao: text("observacao"),
+  atualizadoPorUserId: int("atualizadoPorUserId"),
+  atualizadoPorNome: varchar("atualizadoPorNome", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, t => [index("lead_contatos_leadId_idx").on(t.leadId)]);
+
+export type LeadContato = typeof leadContatos.$inferSelect;
+export type InsertLeadContato = typeof leadContatos.$inferInsert;
+
+// Uma linha por chamada paga a uma API externa (hoje so EmpresAqui), para o "consumo do mes" em
+// Configuracoes > Integracoes. A API nao informa saldo: a contagem e local.
+export const integracaoConsultas = mysqlTable("integracao_consultas", {
+  id: int("id").autoincrement().primaryKey(),
+  integracao: varchar("integracao", { length: 40 }).notNull(),
+  cnpj: varchar("cnpj", { length: 14 }),
+  resultado: mysqlEnum("resultado", ["ok", "nao_encontrado", "erro", "limite"]).notNull(),
+  httpStatus: int("httpStatus"),
+  userId: int("userId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, t => [index("integracao_consultas_integracao_createdAt_idx").on(t.integracao, t.createdAt)]);
+
+export type IntegracaoConsulta = typeof integracaoConsultas.$inferSelect;
+export type InsertIntegracaoConsulta = typeof integracaoConsultas.$inferInsert;
