@@ -31,6 +31,7 @@ import CalendarModal from "@/components/CalendarModal";
 import ContatosCard from "@/components/ContatosCard";
 import EmpresaCard from "@/components/EmpresaCard";
 import ProcedimentosCard from "@/components/ProcedimentosCard";
+import CarteiraCard from "@/components/CarteiraCard";
 import { cpfValido, digitos, formatarCpf } from "@shared/contatos";
 
 function formatCurrency(value: string | null): string {
@@ -308,6 +309,8 @@ export default function LeadDetail() {
                 </div>
               )}
             </div>
+
+            <CarteiraCard leadId={leadId} isAdmin={user?.role === "admin"} onSaiuDaCarteira={() => setLocation("/dashboard")} />
 
             <ProcedimentosCard leadId={leadId} />
 

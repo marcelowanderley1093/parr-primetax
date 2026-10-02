@@ -32,6 +32,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
 import ImportEmpresaquiSection from "@/components/ImportEmpresaquiSection";
+import DistribuicaoTab from "@/components/DistribuicaoTab";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hojeIso, situacaoPrazo, type SituacaoPrazo } from "@shared/editais";
 
@@ -89,7 +90,10 @@ const COR_SITUACAO_EMPRESA: Record<string, string> = {
   BAIXADA: "text-muted-foreground",
 };
 
-type DashboardTab = "kanban" | "calendar" | "import" | "settings";
+type DashboardTab = "kanban" | "calendar" | "distribuicao" | "import" | "settings";
+
+// Visao do Kanban: "todos" | "livres" | "arquivados" | id do parceiro (o servidor prende o parceiro a propria carteira).
+type Visao = "todos" | "livres" | "arquivados" | number;
 
 function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead; hoje: string; onDragStart: (e: React.DragEvent, lead: Lead) => void; onClick: () => void; onDelete?: (id: number) => void }) {
   const prazo = situacaoPrazo(lead.ultimaPublicacao, hoje);
@@ -174,9 +178,10 @@ function KanbanCard({ lead, hoje, onDragStart, onClick, onDelete }: { lead: Lead
 
 const TAMANHO_PAGINA = 50;
 
-function KanbanColumn({ status, busca, hoje, onDragStart, onDrop, onDragOver, onCardClick, onDeleteLead, isDragOver }: {
+function KanbanColumn({ status, busca, visao, hoje, onDragStart, onDrop, onDragOver, onCardClick, onDeleteLead, isDragOver }: {
   status: LeadStatus;
   busca: string;
+  visao: Visao;
   hoje: string;
   onDragStart: (e: React.DragEvent, lead: Lead) => void;
   onDrop: (e: React.DragEvent, status: LeadStatus) => void;
@@ -188,7 +193,7 @@ function KanbanColumn({ status, busca, hoje, onDragStart, onDrop, onDragOver, on
   const config = STATUS_CONFIG[status];
   // Paginado no servidor: 50 por vez; "carregar mais" busca a proxima pagina.
   const q = trpc.leads.coluna.useInfiniteQuery(
-    { status, busca: busca || undefined, limite: TAMANHO_PAGINA },
+    { status, busca: busca || undefined, limite: TAMANHO_PAGINA, visao },
     { getNextPageParam: ultima => ultima.proximo ?? undefined, initialCursor: 0 },
   );
   const leads = (q.data?.pages.flatMap(p => p.itens) ?? []) as Lead[];
@@ -238,6 +243,8 @@ function KanbanTab() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin"; // excluir lead: so admin (o parceiro arquiva)
+  const [visao, setVisao] = useState<Visao>("todos");
+  const { data: parceiros = [] } = trpc.carteira.parceiros.useQuery(undefined, { enabled: isAdmin });
   const [search, setSearch] = useState("");
   const [busca, setBusca] = useState(""); // busca efetiva, com atraso para nao consultar a cada tecla
   const [dragOverColumn, setDragOverColumn] = useState<LeadStatus | null>(null);
@@ -252,7 +259,7 @@ function KanbanTab() {
   }, [search]);
 
   const utils = trpc.useUtils();
-  const { data: contagem } = trpc.leads.contagem.useQuery({ busca: busca || undefined });
+  const { data: contagem } = trpc.leads.contagem.useQuery({ busca: busca || undefined, visao });
   const totalGeral = contagem ? Object.values(contagem).reduce((a, b) => a + b, 0) : 0;
   const recarregar = useCallback(() => {
     utils.leads.coluna.invalidate();
@@ -309,6 +316,26 @@ function KanbanTab() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <select
+            value={String(visao)}
+            onChange={e => { const v = e.target.value; setVisao(v === "todos" || v === "livres" || v === "arquivados" ? v : Number(v)); }}
+            className="h-9 rounded-md border border-input bg-white px-2 text-sm"
+            title="Quais leads mostrar"
+          >
+            {isAdmin ? (
+              <>
+                <option value="todos">Todos os leads</option>
+                <option value="livres">Livres (sem parceiro)</option>
+                {parceiros.map(p => <option key={p.id} value={p.id}>Carteira: {p.nome}</option>)}
+                <option value="arquivados">Arquivados</option>
+              </>
+            ) : (
+              <>
+                <option value="todos">Minha carteira</option>
+                <option value="arquivados">Meus arquivados</option>
+              </>
+            )}
+          </select>
           <Button variant="outline" size="sm" onClick={recarregar}>
             <RefreshCw className="h-4 w-4 mr-1" /> Atualizar
           </Button>
@@ -324,6 +351,7 @@ function KanbanTab() {
             key={status}
             status={status}
             busca={busca}
+            visao={visao}
             hoje={hoje}
             onDragStart={handleDragStart}
             onDrop={handleDrop}
@@ -945,6 +973,7 @@ export default function Dashboard() {
   const allTabs: { id: DashboardTab; label: string; icon: React.ElementType; adminOnly?: boolean }[] = [
     { id: "kanban", label: "Clientes", icon: Users },
     { id: "calendar", label: "Calendário", icon: CalendarIcon },
+    { id: "distribuicao", label: "Distribuição", icon: Link2, adminOnly: true },
     { id: "import", label: "Importar", icon: FileSpreadsheet, adminOnly: true },
     { id: "settings", label: "Configurações", icon: Settings, adminOnly: true },
   ];
@@ -979,6 +1008,7 @@ export default function Dashboard() {
           <ImportEmpresaquiSection />
         </>
       )}
+      {activeTab === "distribuicao" && isAdmin && <DistribuicaoTab />}
       {activeTab === "settings" && isAdmin && <SettingsTab />}
     </DashboardLayout>
   );
