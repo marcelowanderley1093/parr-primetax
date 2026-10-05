@@ -5,6 +5,8 @@
 Description=Backup MySQL do PARR (%i)
 After=mysql.service
 Requires=mysql.service
+# Falha -> e-mail (scripts/alerta-falha.ts); instancia do alerta = parr-backup-<ambiente>
+OnFailure=parr-alerta@%p-%i.service
 
 [Service]
 Type=oneshot

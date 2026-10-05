@@ -1,0 +1,11 @@
+# /etc/systemd/system/parr-backup-offsite@.timer — diario 04:10 UTC (1 h depois do backup local das 03:10)
+[Unit]
+Description=Timer da copia off-VPS do backup do PARR (%i)
+
+[Timer]
+OnCalendar=*-*-* 04:10:00 UTC
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

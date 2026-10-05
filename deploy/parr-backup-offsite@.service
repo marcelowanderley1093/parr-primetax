@@ -1,0 +1,14 @@
+# /etc/systemd/system/parr-backup-offsite@.service — instancia: staging | prod
+# Copia o dump do dia para o Backblaze B2, criptografado (scripts/backup-offsite.sh). Falha -> e-mail (parr-alerta@).
+[Unit]
+Description=Copia off-VPS do backup MySQL do PARR (%i)
+After=network-online.target
+Wants=network-online.target
+OnFailure=parr-alerta@%p-%i.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/bash /srv/parr/prod/scripts/backup-offsite.sh %i
+Nice=10
+IOSchedulingClass=idle
