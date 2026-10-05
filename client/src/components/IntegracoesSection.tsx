@@ -13,7 +13,7 @@ const n = (x: number) => x.toLocaleString("pt-BR");
  */
 export default function IntegracoesSection() {
   const utils = trpc.useUtils();
-  const { data: ea } = trpc.integracoes.empresaqui.useQuery();
+  const { data: ea, isLoading, error } = trpc.integracoes.empresaqui.useQuery();
   const [cacheDias, setCacheDias] = useState("");
   const [teto, setTeto] = useState("");
   const [cnpjTeste, setCnpjTeste] = useState("");
@@ -39,7 +39,15 @@ export default function IntegracoesSection() {
     onError: e => toast.error(e.message),
   });
 
-  if (!ea) return null;
+  if (!ea) {
+    // Nunca sumir em silencio: carregando ou erro aparecem no lugar do card.
+    return (
+      <div className="bg-white rounded-xl border p-6">
+        <div className="flex items-center gap-3 mb-1"><Plug className="h-5 w-5 text-primary" /><h4 className="font-semibold">Integrações</h4></div>
+        <p className="text-sm text-muted-foreground">{isLoading ? "Carregando…" : `Não foi possível carregar as integrações${error ? `: ${error.message}` : "."}`}</p>
+      </div>
+    );
+  }
   const pct = ea.tetoMensal > 0 ? Math.min(100, Math.round((ea.consumoMes / ea.tetoMensal) * 100)) : 100;
 
   return (
@@ -66,7 +74,7 @@ export default function IntegracoesSection() {
             <span className="font-medium">{n(ea.consumoMes)} de {n(ea.tetoMensal)}</span>
           </div>
           <div className="h-2 rounded bg-muted mt-1 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-            <div className="h-full rounded bg-primary" style={{ width: `${pct}%` }} />
+            <div className="h-full rounded bg-[#008C95]" style={{ width: `${pct}%` }} />
           </div>
           {Object.keys(ea.consumoPorResultado).length > 0 && (
             <div className="text-xs text-muted-foreground mt-1">
