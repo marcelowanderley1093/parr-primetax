@@ -23,7 +23,7 @@ describe("planFor", () => {
     const p = planFor("leads");
     expect(p.order).toEqual(["lead_imports", "leads", "lead_status_history", "site_settings"]);
     expect(p.mustBeEmpty).toEqual(["lead_imports", "leads", "lead_notes", "lead_status_history", "site_settings"]);
-    expect(p.referenceCounts).toEqual({ lead_imports: 1, leads: 888, lead_status_history: 896, site_settings: 1 });
+    expect(p.referenceCounts).toEqual({}); // referencia = linhas selecionadas do proprio export (virada com export final)
     expect(p.order).not.toContain("lead_notes");
     expect(p.order).not.toContain("users");
     expect(p.order).not.toContain("local_users");

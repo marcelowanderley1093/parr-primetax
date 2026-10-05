@@ -14,7 +14,11 @@ export type ModePlan = {
   order: string[];
   /** Tabelas que precisam estar vazias antes de escrever. */
   mustBeEmpty: string[];
-  referenceCounts: Record<string, number>;
+  /**
+   * Contagem esperada no banco ao final. Tabela ausente aqui = o proprio export e a referencia
+   * (linhas selecionadas do arquivo). Modo leads usa o export: a virada traz um export final com mais leads.
+   */
+  referenceCounts: Partial<Record<string, number>>;
   /** Filtro de linhas por tabela (aplicado antes das transformacoes). */
   rowFilter: Partial<Record<string, (row: Row) => boolean>>;
   /** Transformacao por tabela (linha ja preparada para o drizzle). */
@@ -40,12 +44,6 @@ const FULL_REFERENCE: Record<string, number> = {
   lead_imports: 1,
 };
 
-const LEADS_REFERENCE: Record<string, number> = {
-  lead_imports: 1,
-  leads: 888,
-  lead_status_history: 896,
-  site_settings: 1,
-};
 
 export function planFor(mode: ImportMode): ModePlan {
   if (mode === "full") {
@@ -81,7 +79,7 @@ export function planFor(mode: ImportMode): ModePlan {
     mode,
     order: ["lead_imports", "leads", "lead_status_history", "site_settings"],
     mustBeEmpty: ["lead_imports", "leads", "lead_notes", "lead_status_history", "site_settings"],
-    referenceCounts: LEADS_REFERENCE,
+    referenceCounts: {}, // referencia = o proprio export (decisao 05/10/2026: export final na virada)
     rowFilter: {
       site_settings: row => row.settingKey === "videoUrl",
     },
