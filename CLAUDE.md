@@ -48,7 +48,7 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 ## Comandos
 - Typecheck: `pnpm check` (= `tsc --noEmit`) · Testes: `pnpm test` (= `vitest run`; inclui
   `server/**/*.test.ts` e `client/src/**/*.test.ts`) · Build: `pnpm build`.
-- Baseline atual: tsc 0 · **323 passed / 0 failed** (32 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
+- Baseline atual: tsc 0 · **333 passed / 0 failed** (33 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
   Nenhum teste depende de `.env`.
 - Migrações: editar `drizzle/schema.ts` → `pnpm exec drizzle-kit generate --name <descricao>` (exige
   `DATABASE_URL` definida no shell, qualquer valor; não conecta) → conferir o `.sql` gerado. **Nunca editar

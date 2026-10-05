@@ -21,6 +21,7 @@ import * as sincronizacao from "./empresaqui/sincronizacao";
 import { MENSAGEM_ERRO_API } from "./empresaqui/clienteApi";
 import { chaveCnpjLead } from "./empresaqui/importacao";
 import { MOTIVOS_ARQUIVAMENTO, SITUACOES_CADASTRAIS, UFS, limparFiltro } from "@shared/carteira";
+import { eventoDoGoogle, type EventoAgenda } from "@shared/agenda";
 import { parseLocalOpenId } from "./localUsersHelpers";
 import { ArquivoInvalidoError, contarLeadsPorCnpj, decodificarArquivo, linhaEmpresa, resumirImportacao } from "./empresaqui/importacao";
 
@@ -631,18 +632,15 @@ export const appRouter = router({
         const timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0).toISOString();
 
         const calRes = await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime&maxResults=100`,
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime&maxResults=250`,
           { headers: { Authorization: `Bearer ${accessToken}` } }
         );
         const calData = await calRes.json();
 
-        const events = (calData.items || []).map((item: any) => ({
-          id: item.id,
-          title: item.summary || "Sem título",
-          start: item.start?.dateTime || item.start?.date || "",
-          end: item.end?.dateTime || item.end?.date || "",
-          description: item.description || "",
-        }));
+        // Local de trabalho ("Escritorio") fica fora; dia inteiro vem marcado (shared/agenda.ts).
+        const events: EventoAgenda[] = (calData.items || [])
+          .map(eventoDoGoogle)
+          .filter((e: EventoAgenda | null): e is EventoAgenda => e !== null);
 
         // Parceiro ve so os eventos dos leads da carteira dele (decisao 02/10/2026).
         const responsavel = responsavelDoEscopo(ctx.user);
