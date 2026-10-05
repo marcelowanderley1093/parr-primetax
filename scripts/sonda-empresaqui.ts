@@ -34,15 +34,41 @@ function jsType(v: unknown): string {
 // Descreve a estrutura sem valores. Objetos com chaves numericas ("0", "1", ...) sao colapsados:
 // mostra quantas chaves numericas existem e a estrutura da primeira (assim o legado, que poe as
 // dividas sob chaves numericas, nao despeja centenas de linhas).
-function describe(v: unknown, indent: string, depth: number, out: string[]): void {
+/**
+ * Lista de objetos (ex.: historicoDividasPorTrimestre, entradas numericas de socios/dividas): agrupa pelo conjunto de
+ * chaves e, para cada grupo, mostra quantos itens e os FORMATOS distintos de cada campo (ate 6), nunca os valores.
+ */
+function describeLista(itens: unknown[], indent: string, out: string[]): void {
+  const grupos = new Map<string, Record<string, unknown>[]>();
+  for (const it of itens) {
+    if (!it || typeof it !== "object" || Array.isArray(it)) continue;
+    const k = Object.keys(it as object).sort().join(",");
+    grupos.set(k, [...(grupos.get(k) ?? []), it as Record<string, unknown>]);
+  }
+  for (const [chaves, objs] of Array.from(grupos.entries())) {
+    out.push(`${indent}grupo com ${objs.length} item(ns): ${chaves}`);
+    for (const campo of chaves.split(",")) {
+      const formatos = new Map<string, number>();
+      for (const o of objs) {
+        const val = o[campo];
+        const f = typeof val === "string" ? (val === "" ? "(vazio)" : mascara(val)) : jsType(val);
+        formatos.set(f, (formatos.get(f) ?? 0) + 1);
+      }
+      const lista = Array.from(formatos.entries()).slice(0, 6).map(([f, n]) => `${f} (${n}x)`).join(" | ");
+      out.push(`${indent}  ${campo}: ${lista}${formatos.size > 6 ? ` | … +${formatos.size - 6} formatos` : ""}`);
+    }
+  }
+}
+
+export function describe(v: unknown, indent: string, depth: number, out: string[]): void {
   if (depth > MAX_DEPTH) {
     out.push(`${indent}(profundidade maxima)`);
     return;
   }
   if (Array.isArray(v)) {
     out.push(`${indent}[${v.length} item(ns)]${v.length ? ` tipo do 1o: ${jsType(v[0])}` : ""}`);
-    if (v.length && v[0] && typeof v[0] === "object") describe(v[0], indent + "  ", depth + 1, out);
-    else if (v.length && typeof v[0] === "string") out.push(`${indent}  formato do 1o: ${mascara(v[0])}`);
+    if (v.length && v[0] && typeof v[0] === "object") describeLista(v, indent + "  ", out);
+    else if (v.length && typeof v[0] === "string") out.push(`${indent}  formatos: ${Array.from(new Set(v.map(x => mascara(String(x))))).slice(0, 6).join(" | ")}`);
     return;
   }
   if (!v || typeof v !== "object") return;
@@ -57,8 +83,8 @@ function describe(v: unknown, indent: string, depth: number, out: string[]): voi
     if (child && typeof child === "object") describe(child, indent + "  ", depth + 1, out);
   }
   if (numeric.length) {
-    out.push(`${indent}<${numeric.length} chave(s) numerica(s)> estrutura da primeira (${numeric[0][0]}): ${jsType(numeric[0][1])}`);
-    if (numeric[0][1] && typeof numeric[0][1] === "object") describe(numeric[0][1], indent + "  ", depth + 1, out);
+    out.push(`${indent}<${numeric.length} chave(s) numerica(s)> agrupadas por tipo de entrada:`);
+    describeLista(numeric.map(([, val]) => val), indent + "  ", out);
   }
 }
 
@@ -107,4 +133,4 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+if (process.argv[1]?.includes("sonda-empresaqui")) main();
