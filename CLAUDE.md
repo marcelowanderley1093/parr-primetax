@@ -18,7 +18,8 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 - **Produção**: https://parr.primetax.com.br — mesma VPS, `/srv/parr/prod`, serviço `parr-prod`,
   `127.0.0.1:3102`, nginx **sem** Basic Auth (landing pública), banco `parr_prod`, env em
   `/etc/parr/prod.env` (segredos novos, nunca os do staging). Montagem e operação: `deploy/PRODUCAO.md`.
-  Links públicos (anúncios, bio, WhatsApp, QR) ainda apontam para a Manus até o cutover.
+  **Virada feita em 05/10/2026** (export final da Manus + base de editais; roteiro em `deploy/VIRADA-PRODUCAO.md`).
+  Links públicos (anúncios, bio, WhatsApp, QR) trocados para parr.primetax.com.br pelo Marcelo.
 - **Backup**: `scripts/backup-mysql.sh` via `parr-backup@{staging,prod}.timer` (03:10 UTC, 14 dias,
   `/var/backups/parr/`, credenciais só em `/etc/parr/backup-<env>.cnf`). Restore e teste: `deploy/RESTORE.md`.
   Cópia off-VPS: backlog, **obrigatória antes de aposentar a Manus**.
@@ -58,8 +59,13 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
   no Gate 2.5 as tags 0006–0008 foram renomeadas no journal para manter paridade com os nomes da Manus.
 - Scripts: `scripts/criar-admin.ts` (bootstrap do admin; `ADMIN_EMAIL`/`ADMIN_NOME` no shell),
   `scripts/sonda-export.ts` (estrutura do export, sem valores), `scripts/import-manus.ts` (import em
-  transação; `--mode full|leads`, `--dry-run`/`--apply`; lógica pura em `scripts/lib/importManus.ts`),
-  `scripts/deploy-staging.sh`, `scripts/deploy-prod.sh`, `scripts/backup-mysql.sh`. Units e nginx em `deploy/`.
+  transação; `--mode full|leads`, `--dry-run`/`--apply`; lógica pura em `scripts/lib/importManus.ts`; no modo
+  leads a referência de contagem é o próprio export), `scripts/converter-editais.ts` (planilha de editais →
+  CSV, roda na máquina local), `scripts/import-editais.ts` (carga idempotente da base de editais em lotes),
+  `scripts/migrar-contatos.ts` (JSON `telefoneSocios` → `lead_contatos` + CPF do intimado),
+  `scripts/atribuir-andamento.ts` (leads em andamento → quem os moveu, por grupo), `scripts/sonda-empresaqui.ts`
+  (estrutura da API EmpresAqui), `scripts/deploy-staging.sh`, `scripts/deploy-prod.sh`, `scripts/backup-mysql.sh`.
+  Todos com `--dry-run`/`--apply` quando gravam; nunca imprimem valores de linha. Units e nginx em `deploy/`.
 
 ## Deploy
 Marcelo roda na VPS, como root: `bash /srv/parr/staging/scripts/deploy-staging.sh` (staging) ou
@@ -114,10 +120,28 @@ Instalar sempre com devDependencies (`dist/index.js` importa `vite` estaticament
 - Code-split do `xlsx` (429 kB); `PORT` inválida encerra com código 0; "Ignored build scripts" (esbuild,
   @tailwindcss/oxide) no pnpm; string "Caráter" na tela do Calendar (tradução errada de Warning).
 
+## Modelo de dados (desde 05/10/2026)
+- **Lead = par pessoa + empresa** de edital PGFN (PARR); procedimentos em `lead_procedimentos` (nº único),
+  editais em `editais`. ~340 mil leads, 542 mil procedimentos (editais 2025–2026). Kanban paginado no servidor.
+- **Grupo** (`leads.grupoId`): leads que compartilham pessoa (nome + CPF parcial) ou empresa (CNPJ); distribuição,
+  devolução e transferência andam sempre pelo grupo inteiro.
+- **Carteira**: `leads.responsavelId` → `local_users.id`. Parceiro (perfil comercial) só acessa leads dele em todas
+  as rotas (`server/acesso.ts`); admin vê tudo. Excluir lead: só admin; parceiro arquiva com motivo.
+  Trilha em `lead_eventos`; filtro salvo por parceiro em `carteiras`.
+- **Empresa** (`empresas`, 1 por CNPJ, EmpresAqui): `dados.csv` / `dados.api` em JSON; EmpresAqui nunca toca
+  nome/telefone/CPF/contatos do lead. Contatos editáveis em `lead_contatos`; CPF completo em `leads.cpf`.
+- **Prazo de impugnação**: publicação + 30 dias corridos, prorrogado ao 1º dia útil só em fim de semana e feriado
+  nacional (conservador; `shared/editais.ts`).
+- Erros internos nunca vão à tela com a mensagem original (`server/_core/trpc.ts`, `formatarErro`).
+
 ## Roteiro
 - Gates 0–2.5: concluídos (desacoplamento da Manus, patch pré-staging, paridade de schema 0006–0008,
   import do banco).
-- Gate 3 (em andamento): staging no ar; bloqueio de tradução; deploy scripts; endurecimento
+- Gate 3: concluído com a virada de 05/10/2026. Pendente: cópia off-VPS dos backups (antes de aposentar
+  a Manus), reinício do Ubuntu com atualizações de segurança, limpeza de 20 leads duplicados herdados da Manus.
+- Próximas fases: C (conferência do CPF pelos dígitos do edital, intimado na lista de sócios da EmpresAqui,
+  enriquecimento por prioridade); D (API EmpresAqui + menu Integrações).
+- Histórico do Gate 3: staging no ar; bloqueio de tradução; deploy scripts; endurecimento
   (mustChangePassword, papel efetivo, procedures de admin); import só-leads; backup; produção montada em
   parr.primetax.com.br com links públicos ainda na Manus. Pendente: virada — export final da Manus → import
   só-leads, convidar equipe, conectar Agenda (redirect URI de produção no Google Cloud Console), smoke no
