@@ -1,6 +1,8 @@
-// Sonda ESTRUTURAL da API EmpresAqui. Consulta UM CNPJ nos dois endpoints conhecidos e imprime somente
-// metadados: status HTTP, content-type e a arvore de chaves da resposta com o tipo JS de cada folha.
-// NUNCA imprime valor de campo nem a URL (a URL carrega o token). Gasta ate 2 consultas do plano.
+// Sonda ESTRUTURAL da API EmpresAqui. Consulta UM CNPJ e imprime somente metadados: status HTTP, content-type,
+// a arvore de chaves e, para cada texto, o FORMATO mascarado (digito -> 9, letra -> a; ex.: "99/99/9999").
+// NUNCA imprime valor de campo nem a URL (a URL carrega o token).
+// Padrao: so o endpoint atual (1 consulta). Com --legado consulta tambem o legado (2 consultas; em 02/10/2026
+// os dois devolveram a mesma estrutura).
 //
 // Uso (Git Bash): EMPRESAQUI_API_TOKEN=... pnpm tsx scripts/sonda-empresaqui.ts <cnpj>
 //   - endpoint "atual": GET /acesso/RetornoJson.php?Token=&Cnpj=  (documentacao DocsAPI)
@@ -12,6 +14,11 @@ const TIMEOUT_MS = 20_000;
 const MAX_DEPTH = 6;
 
 type Probe = { nome: string; url: (token: string, cnpj: string) => string };
+
+/** Formato sem o valor: digito -> 9, letra -> a (inclui acentuadas), ate 40 caracteres. */
+export function mascara(s: string): string {
+  return s.replace(/\d/g, "9").replace(/[A-Za-zÀ-ÿ]/g, "a").slice(0, 40);
+}
 
 const PROBES: Probe[] = [
   { nome: "atual", url: (t, c) => `${BASE}/acesso/RetornoJson.php?Token=${encodeURIComponent(t)}&Cnpj=${c}` },
@@ -27,14 +34,41 @@ function jsType(v: unknown): string {
 // Descreve a estrutura sem valores. Objetos com chaves numericas ("0", "1", ...) sao colapsados:
 // mostra quantas chaves numericas existem e a estrutura da primeira (assim o legado, que poe as
 // dividas sob chaves numericas, nao despeja centenas de linhas).
-function describe(v: unknown, indent: string, depth: number, out: string[]): void {
+/**
+ * Lista de objetos (ex.: historicoDividasPorTrimestre, entradas numericas de socios/dividas): agrupa pelo conjunto de
+ * chaves e, para cada grupo, mostra quantos itens e os FORMATOS distintos de cada campo (ate 6), nunca os valores.
+ */
+function describeLista(itens: unknown[], indent: string, out: string[]): void {
+  const grupos = new Map<string, Record<string, unknown>[]>();
+  for (const it of itens) {
+    if (!it || typeof it !== "object" || Array.isArray(it)) continue;
+    const k = Object.keys(it as object).sort().join(",");
+    grupos.set(k, [...(grupos.get(k) ?? []), it as Record<string, unknown>]);
+  }
+  for (const [chaves, objs] of Array.from(grupos.entries())) {
+    out.push(`${indent}grupo com ${objs.length} item(ns): ${chaves}`);
+    for (const campo of chaves.split(",")) {
+      const formatos = new Map<string, number>();
+      for (const o of objs) {
+        const val = o[campo];
+        const f = typeof val === "string" ? (val === "" ? "(vazio)" : mascara(val)) : jsType(val);
+        formatos.set(f, (formatos.get(f) ?? 0) + 1);
+      }
+      const lista = Array.from(formatos.entries()).slice(0, 6).map(([f, n]) => `${f} (${n}x)`).join(" | ");
+      out.push(`${indent}  ${campo}: ${lista}${formatos.size > 6 ? ` | … +${formatos.size - 6} formatos` : ""}`);
+    }
+  }
+}
+
+export function describe(v: unknown, indent: string, depth: number, out: string[]): void {
   if (depth > MAX_DEPTH) {
     out.push(`${indent}(profundidade maxima)`);
     return;
   }
   if (Array.isArray(v)) {
     out.push(`${indent}[${v.length} item(ns)]${v.length ? ` tipo do 1o: ${jsType(v[0])}` : ""}`);
-    if (v.length && v[0] && typeof v[0] === "object") describe(v[0], indent + "  ", depth + 1, out);
+    if (v.length && v[0] && typeof v[0] === "object") describeLista(v, indent + "  ", out);
+    else if (v.length && typeof v[0] === "string") out.push(`${indent}  formatos: ${Array.from(new Set(v.map(x => mascara(String(x))))).slice(0, 6).join(" | ")}`);
     return;
   }
   if (!v || typeof v !== "object") return;
@@ -44,13 +78,13 @@ function describe(v: unknown, indent: string, depth: number, out: string[]): voi
   for (const [k, child] of named) {
     const t = jsType(child);
     let extra = "";
-    if (typeof child === "string") extra = child.length === 0 ? " (vazio)" : ` (len ${child.length})`;
+    if (typeof child === "string") extra = child.length === 0 ? " (vazio)" : ` (len ${child.length}) formato: ${mascara(child)}`;
     out.push(`${indent}${k}: ${t}${extra}`);
     if (child && typeof child === "object") describe(child, indent + "  ", depth + 1, out);
   }
   if (numeric.length) {
-    out.push(`${indent}<${numeric.length} chave(s) numerica(s)> estrutura da primeira (${numeric[0][0]}): ${jsType(numeric[0][1])}`);
-    if (numeric[0][1] && typeof numeric[0][1] === "object") describe(numeric[0][1], indent + "  ", depth + 1, out);
+    out.push(`${indent}<${numeric.length} chave(s) numerica(s)> agrupadas por tipo de entrada:`);
+    describeLista(numeric.map(([, val]) => val), indent + "  ", out);
   }
 }
 
@@ -92,10 +126,11 @@ async function main(): Promise<void> {
     console.error("PARAR: informe um CNPJ (14 digitos) ou CNPJ base (8 digitos) como argumento.");
     process.exit(1);
   }
-  for (let i = 0; i < PROBES.length; i++) {
+  const probes = process.argv.includes("--legado") ? PROBES : PROBES.filter(p => p.nome === "atual");
+  for (let i = 0; i < probes.length; i++) {
     if (i > 0) await new Promise(r => setTimeout(r, 1_100));
-    await probe(PROBES[i], token, cnpj);
+    await probe(probes[i], token, cnpj);
   }
 }
 
-main();
+if (process.argv[1]?.includes("sonda-empresaqui")) main();

@@ -17,6 +17,9 @@ import { STATUS_CONTATO, cpfValido, digitos, emailValido, normalizarTelefone } f
 import { LayoutInvalidoError, parseEmpresaquiCsv } from "./empresaqui/parserCsv";
 import { LEAD_NAO_ENCONTRADO, exigirAcessoLead, responsavelDoEscopo, visaoKanban } from "./acesso";
 import * as carteira from "./carteira";
+import * as sincronizacao from "./empresaqui/sincronizacao";
+import { MENSAGEM_ERRO_API } from "./empresaqui/clienteApi";
+import { chaveCnpjLead } from "./empresaqui/importacao";
 import { MOTIVOS_ARQUIVAMENTO, SITUACOES_CADASTRAIS, UFS, limparFiltro } from "@shared/carteira";
 import { parseLocalOpenId } from "./localUsersHelpers";
 import { ArquivoInvalidoError, contarLeadsPorCnpj, decodificarArquivo, linhaEmpresa, resumirImportacao } from "./empresaqui/importacao";
@@ -40,6 +43,33 @@ const hojeBrasil = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "America/S
 
 /** Quem esta agindo, para a trilha de eventos (local_users.id + nome). */
 const atorDe = (user: NonNullable<TrpcContext["user"]>): carteira.Ator => ({ localUserId: parseLocalOpenId(user.openId), nome: user.name || "Admin" });
+
+/** CNPJ de 14 digitos com digito verificador valido (o mesmo calculo do leitor do CSV). */
+function cnpjValido14(c: string | null): c is string {
+  if (!c || !/^\d{14}$/.test(c) || /^(\d)\1{13}$/.test(c)) return false;
+  const calc = (len: number) => {
+    let soma = 0;
+    let peso = len - 7;
+    for (let i = 0; i < len; i++) { soma += Number(c[i]) * peso; peso = peso === 2 ? 9 : peso - 1; }
+    const r = soma % 11;
+    return r < 2 ? 0 : 11 - r;
+  };
+  return calc(12) === Number(c[12]) && calc(13) === Number(c[13]);
+}
+
+/** Sincroniza pela API e traduz as falhas para mensagens de tela (sem detalhes internos). */
+async function sincronizarComMensagem(cnpj14: string, userId: number, forcar: boolean) {
+  try {
+    const r = await sincronizacao.sincronizarEmpresa(cnpj14, { userId, forcar });
+    if (r.status === "erro") return { ...r, mensagem: MENSAGEM_ERRO_API[r.codigo] };
+    return r;
+  } catch (e) {
+    if (e instanceof sincronizacao.IntegracaoIndisponivelError || e instanceof sincronizacao.TetoAtingidoError) {
+      throw new TRPCError({ code: "PRECONDITION_FAILED", message: e.message });
+    }
+    throw e;
+  }
+}
 
 async function exigirParceiroAtivo(id: number) {
   if (!(await carteira.ehParceiroAtivo(id))) throw new TRPCError({ code: "BAD_REQUEST", message: "Parceiro inexistente, inativo ou sem perfil comercial" });
@@ -709,6 +739,40 @@ export const appRouter = router({
     doLead: protectedProcedure.input(z.object({ leadId: z.number() })).query(async ({ input, ctx }) => {
       await exigirAcessoLead(ctx.user, input.leadId);
       return db.getEmpresaDoLead(input.leadId);
+    }),
+
+    // Atualiza a empresa do lead pela API EmpresAqui (admin e parceiro; parceiro so na propria carteira).
+    // Cache e teto mensal em empresaqui/sincronizacao.ts; "forcar" (ignorar o cache) so admin.
+    sincronizar: protectedProcedure.input(z.object({ leadId: z.number(), forcar: z.boolean().optional() })).mutation(async ({ input, ctx }) => {
+      await exigirAcessoLead(ctx.user, input.leadId);
+      const lead = await db.getLeadById(input.leadId);
+      if (!lead) throw new TRPCError({ code: "NOT_FOUND", message: LEAD_NAO_ENCONTRADO });
+      const cnpj = chaveCnpjLead(lead.cnpj);
+      if (!cnpjValido14(cnpj)) throw new TRPCError({ code: "BAD_REQUEST", message: "Lead sem CNPJ válido para consultar" });
+      return sincronizarComMensagem(cnpj, ctx.user.id, !!input.forcar && ctx.user.role === "admin");
+    }),
+  }),
+
+  // Configuracoes > Integracoes (so admin). O token nunca sai do servidor: so "configurado: sim/nao".
+  integracoes: router({
+    empresaqui: adminProcedure.query(async () => {
+      const [config, consumo] = await Promise.all([sincronizacao.getConfig(), sincronizacao.consumoDoMes()]);
+      return { tokenConfigurado: sincronizacao.tokenConfigurado(), ...config, consumoMes: consumo.total, consumoPorResultado: consumo.porResultado };
+    }),
+
+    salvarEmpresaqui: adminProcedure.input(z.object({
+      cacheDias: z.number().int().min(1).max(365),
+      tetoMensal: z.number().int().min(0).max(100000),
+    })).mutation(async ({ input }) => {
+      await sincronizacao.salvarConfig(input);
+      return { success: true };
+    }),
+
+    // Testar conexao: consulta um CNPJ informado ignorando o cache (gasta 1 consulta).
+    testarEmpresaqui: adminProcedure.input(z.object({ cnpj: z.string().max(20) })).mutation(async ({ input, ctx }) => {
+      const cnpj = chaveCnpjLead(input.cnpj);
+      if (!cnpjValido14(cnpj)) throw new TRPCError({ code: "BAD_REQUEST", message: "CNPJ inválido" });
+      return sincronizarComMensagem(cnpj, ctx.user.id, true);
     }),
   }),
 
