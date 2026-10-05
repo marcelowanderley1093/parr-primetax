@@ -74,7 +74,7 @@ export default function IntegracoesSection() {
             <span className="font-medium">{n(ea.consumoMes)} de {n(ea.tetoMensal)}</span>
           </div>
           <div className="h-2 rounded bg-muted mt-1 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-            <div className="h-full rounded bg-primary" style={{ width: `${pct}%` }} />
+            <div className="h-full rounded bg-[#008C95]" style={{ width: `${pct}%` }} />
           </div>
           {Object.keys(ea.consumoPorResultado).length > 0 && (
             <div className="text-xs text-muted-foreground mt-1">
