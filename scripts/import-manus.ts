@@ -229,7 +229,7 @@ async function main(): Promise<number> {
     const sel = selectedCounts.get(name) ?? 0;
     const ins = insertedCounts.get(name) ?? 0;
     const fin = finalCounts.get(name) ?? 0;
-    const ref = plan.referenceCounts[name];
+    const ref = plan.referenceCounts[name] ?? sel; // sem numero fixo: o banco tem de ter exatamente o que veio do export
     const ok = fin === ref;
     if (!ok) divergent.push(name);
     const selTxt = sel !== read ? `selecionadas ${sel} / ` : "";
