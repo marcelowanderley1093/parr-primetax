@@ -48,7 +48,7 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 ## Comandos
 - Typecheck: `pnpm check` (= `tsc --noEmit`) · Testes: `pnpm test` (= `vitest run`; inclui
   `server/**/*.test.ts` e `client/src/**/*.test.ts`) · Build: `pnpm build`.
-- Baseline atual: tsc 0 · **299 passed / 0 failed** (29 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
+- Baseline atual: tsc 0 · **320 passed / 0 failed** (31 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
   Nenhum teste depende de `.env`.
 - Migrações: editar `drizzle/schema.ts` → `pnpm exec drizzle-kit generate --name <descricao>` (exige
   `DATABASE_URL` definida no shell, qualquer valor; não conecta) → conferir o `.sql` gerado. **Nunca editar
@@ -133,6 +133,10 @@ Instalar sempre com devDependencies (`dist/index.js` importa `vite` estaticament
 - **Prazo de impugnação**: publicação + 30 dias corridos, prorrogado ao 1º dia útil só em fim de semana e feriado
   nacional (conservador; `shared/editais.ts`).
 - Erros internos nunca vão à tela com a mensagem original (`server/_core/trpc.ts`, `formatarErro`).
+- **API EmpresAqui** (Fase D): token só em `EMPRESAQUI_API_TOKEN` (env de cada ambiente; a tela mostra só "configurado").
+  Botão no card da empresa (admin e parceiro; parceiro só na carteira); cache (padrão 30 dias) e teto mensal (padrão 500)
+  em `site_settings`; cada consulta registrada em `integracao_consultas`. Limite da API: 1 req/s (fila em
+  `server/empresaqui/clienteApi.ts`). A API corrompe acentos (UTF-8 lido como Latin-1): `corrigirTexto`.
 
 ## Roteiro
 - Gates 0–2.5: concluídos (desacoplamento da Manus, patch pré-staging, paridade de schema 0006–0008,
