@@ -1,10 +1,13 @@
+import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { Building2, ChevronDown, ChevronRight, Landmark, Mail, Phone, Users } from "lucide-react";
+import { toast } from "sonner";
+import { Building2, ChevronDown, ChevronRight, Landmark, Mail, Phone, RefreshCw, Users } from "lucide-react";
 import { useState } from "react";
 import { formatarTelefone } from "@shared/contatos";
+import DividaTrimestralChart, { type Trimestre } from "@/components/DividaTrimestralChart";
 
-// Formato de empresas.dados.csv (gravado por server/empresaqui/importacao.ts). Tudo opcional: o JSON
-// pode vir de versoes anteriores do importador ou, no futuro, so da API.
+// empresas.dados = { csv?: ..., api?: ... } (server/empresaqui/importacao.ts e sincronizacao.ts). Os nomes de campo
+// sao os mesmos nas duas fontes; a API traz extras (receita/situacao da divida, historico trimestral). Tudo opcional.
 type SocioCsv = { identificador: string; nome: string; faixaEtaria: string | null; cpfCnpjMascarado: string | null; qualificacao: string | null; dataEntrada: string | null };
 type DadosCsv = Partial<{
   nomeFantasia: string | null;
@@ -27,7 +30,8 @@ type DadosCsv = Partial<{
   quadroFuncionarios: string | null;
   historicoRegime: { ano: number; regime: string }[];
   socios: SocioCsv[];
-  dividas: { numero: string; valorCentavos: number }[];
+  dividas: { numero: string; valorCentavos: number; receita?: string | null; situacao?: string | null; data?: string | null }[];
+  historicoDividasTrimestral: Trimestre[];
 }>;
 
 const brl = (centavos: number | null | undefined) =>
@@ -45,19 +49,59 @@ const COR_SITUACAO: Record<string, string> = {
 
 const DIVIDAS_INICIAIS = 10;
 
-/** Dados oficiais da empresa do lead (EmpresAqui). So leitura; aparece apenas quando ha empresa vinculada. */
-export default function EmpresaCard({ leadId }: { leadId: number }) {
+const dia = (d: Date | string) => new Date(d).toLocaleDateString("pt-BR");
+
+/**
+ * Dados oficiais da empresa do lead (EmpresAqui: arquivo do site e/ou API). A fonte mais recente vence.
+ * Botao "Atualizar pela EmpresAqui" (admin e parceiro; cache e teto mensal no servidor). Lead com CNPJ e sem empresa
+ * vinculada mostra so o botao "Buscar".
+ */
+export default function EmpresaCard({ leadId, temCnpj, isAdmin }: { leadId: number; temCnpj: boolean; isAdmin: boolean }) {
+  const utils = trpc.useUtils();
   const { data: empresa } = trpc.empresas.doLead.useQuery({ leadId });
   const [verDividas, setVerDividas] = useState(false);
   const [todasDividas, setTodasDividas] = useState(false);
   const [verSocios, setVerSocios] = useState(false);
 
-  if (!empresa) return null;
-  const d: DadosCsv = ((empresa.dados as { csv?: DadosCsv } | null)?.csv) ?? {};
+  const sincronizar = trpc.empresas.sincronizar.useMutation({
+    onSuccess: r => {
+      if (r.status === "ok") toast.success("Dados da empresa atualizados pela EmpresAqui.");
+      else if (r.status === "cache") toast.info(`Já consultado em ${dia(r.apiAtualizadoEm)}: mostrando os dados guardados (sem gastar consulta).`);
+      else if (r.status === "nao_encontrado") toast.warning("CNPJ não encontrado na EmpresAqui.");
+      else toast.error("mensagem" in r ? r.mensagem : "Falha na consulta.");
+      utils.empresas.doLead.invalidate({ leadId });
+      utils.leads.coluna.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
+  const botao = (rotulo: string, forcar = false) => (
+    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={sincronizar.isPending} onClick={() => sincronizar.mutate({ leadId, forcar })}>
+      <RefreshCw className={`h-3.5 w-3.5 mr-1 ${sincronizar.isPending ? "animate-spin" : ""}`} /> {rotulo}
+    </Button>
+  );
+
+  if (!empresa) {
+    if (!temCnpj) return null;
+    return (
+      <div className="bg-white rounded-xl border border-border p-6">
+        <h2 className="font-bold text-lg flex items-center gap-2 mb-2"><Building2 className="h-5 w-5 text-primary" /> Dados da empresa</h2>
+        <p className="text-xs text-muted-foreground mb-3">Ainda sem dados da EmpresAqui para este CNPJ.</p>
+        {botao("Buscar na EmpresAqui")}
+      </div>
+    );
+  }
+
+  const fontes = (empresa.dados as { csv?: DadosCsv; api?: DadosCsv } | null) ?? {};
+  const tApi = empresa.apiAtualizadoEm ? new Date(empresa.apiAtualizadoEm).getTime() : 0;
+  const tCsv = empresa.csvAtualizadoEm ? new Date(empresa.csvAtualizadoEm).getTime() : 0;
+  const apiVence = !!fontes.api && tApi >= tCsv;
+  const d: DadosCsv = apiVence ? { ...fontes.csv, ...fontes.api } : { ...fontes.api, ...fontes.csv };
   const dividas = [...(d.dividas ?? [])].sort((a, b) => b.valorCentavos - a.valorCentavos);
   const socios = d.socios ?? [];
   const historico = d.historicoRegime ?? [];
-  const atualizado = empresa.csvAtualizadoEm ? new Date(empresa.csvAtualizadoEm).toLocaleDateString("pt-BR") : null;
+  const trimestral = fontes.api?.historicoDividasTrimestral ?? [];
+  const fonte = apiVence ? `EmpresAqui (consulta) · ${dia(empresa.apiAtualizadoEm!)}` : tCsv ? `EmpresAqui (arquivo) · ${dia(empresa.csvAtualizadoEm!)}` : null;
+  const naoEncontrado = empresa.syncStatus === "nao_encontrado" && !empresa.razaoSocial;
 
   return (
     <div className="bg-white rounded-xl border border-border p-6">
@@ -65,8 +109,16 @@ export default function EmpresaCard({ leadId }: { leadId: number }) {
         <h2 className="font-bold text-lg flex items-center gap-2">
           <Building2 className="h-5 w-5 text-primary" /> Dados da empresa
         </h2>
-        {atualizado && <div className="text-xs text-muted-foreground mt-0.5">Fonte: EmpresAqui · atualizado em {atualizado}</div>}
+        {fonte && <div className="text-xs text-muted-foreground mt-0.5">Fonte: {fonte}</div>}
+        <div className="flex flex-wrap gap-2 mt-2">
+          {botao("Atualizar pela EmpresAqui")}
+          {isAdmin && empresa.apiAtualizadoEm && botao("Forçar nova consulta", true)}
+        </div>
       </div>
+
+      {naoEncontrado && (
+        <p className="text-xs text-muted-foreground">CNPJ não encontrado na EmpresAqui (consultado em {dia(empresa.apiAtualizadoEm!)}).</p>
+      )}
 
       <div className="space-y-3 text-sm">
         <div>
@@ -133,9 +185,14 @@ export default function EmpresaCard({ leadId }: { leadId: number }) {
           {verDividas && dividas.length > 0 && (
             <ul className="mt-2 text-xs space-y-0.5">
               {(todasDividas ? dividas : dividas.slice(0, DIVIDAS_INICIAIS)).map((dv, i) => (
-                <li key={`${dv.numero}-${i}`} className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Inscrição {dv.numero}</span>
-                  <span>{brl(dv.valorCentavos)}</span>
+                <li key={`${dv.numero}-${i}`}>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Inscrição {dv.numero}</span>
+                    <span>{brl(dv.valorCentavos)}</span>
+                  </div>
+                  {(dv.receita || dv.situacao) && (
+                    <div className="text-[11px] text-muted-foreground/80">{[dv.receita, dv.situacao, dataBr(dv.data ?? null)].filter(Boolean).join(" · ")}</div>
+                  )}
                 </li>
               ))}
               {dividas.length > DIVIDAS_INICIAIS && (
@@ -148,6 +205,8 @@ export default function EmpresaCard({ leadId }: { leadId: number }) {
             </ul>
           )}
         </div>
+
+        {trimestral.length > 0 && <DividaTrimestralChart dados={trimestral} />}
 
         {socios.length > 0 && (
           <div>

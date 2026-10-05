@@ -316,7 +316,7 @@ export default function LeadDetail() {
 
             <ContatosCard leadId={leadId} nomeLead={lead.nome} />
 
-            <EmpresaCard leadId={leadId} />
+            <EmpresaCard leadId={leadId} temCnpj={!!lead.cnpj} isAdmin={user?.role === "admin"} />
 
             {/* Status Card */}
             <div className="bg-white rounded-xl border border-border p-6">

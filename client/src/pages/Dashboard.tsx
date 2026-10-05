@@ -33,6 +33,7 @@ import { useLocation, useSearch } from "wouter";
 import CalendarModal from "@/components/CalendarModal";
 import ImportEmpresaquiSection from "@/components/ImportEmpresaquiSection";
 import DistribuicaoTab from "@/components/DistribuicaoTab";
+import IntegracoesSection from "@/components/IntegracoesSection";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hojeIso, situacaoPrazo, type SituacaoPrazo } from "@shared/editais";
 
@@ -948,6 +949,8 @@ function SettingsTab() {
             </p>
           )}
         </div>
+
+        <IntegracoesSection />
       </div>
     </div>
   );
