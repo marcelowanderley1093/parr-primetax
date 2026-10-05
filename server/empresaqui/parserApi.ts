@@ -68,6 +68,18 @@ export function centavosBr(v: unknown): number | null {
   return Number(i) * 100 + Number(f.padEnd(2, "0"));
 }
 
+/**
+ * Regime atual a partir do texto da API. A API pode mandar o historico corrido ("ANO 2022 LUCRO PRESUMIDO; ANO 2023
+ * LUCRO REAL"): vale o do ano mais recente (mesma regra do CSV). Texto sem "ANO aaaa" passa como veio.
+ */
+export function regimeAtual(v: unknown): string | null {
+  const s = str(v);
+  const itens = Array.from(s.matchAll(/ANO\s+(\d{4})\s+([^;,]+)/gi)).map(m => ({ ano: Number(m[1]), regime: m[2].trim() }));
+  if (!itens.length) return s ? s.toUpperCase() : null;
+  itens.sort((a, b) => a.ano - b.ano);
+  return itens[itens.length - 1].regime.toUpperCase();
+}
+
 /** Telefone da API (DDD e numero separados) -> so digitos, 10 ou 11; senao null. */
 export function telefoneApi(ddd: unknown, tel: unknown): string | null {
   const d = digitos(str(ddd)) + digitos(str(tel));
@@ -218,7 +230,7 @@ export function parseRespostaApi(json: unknown): DadosApi {
     dataExclusaoSimples: dataAaaammdd(o.data_exc_simples),
     porte: PORTE[str(o.porte)] ?? vazio(o.porte),
     capitalSocialCentavos: capital ? centavosPonto(capital) ?? centavosBr(capital) : null,
-    regimeTributario: vazio(o.regime_tributario)?.toUpperCase() ?? null,
+    regimeTributario: regimeAtual(o.regime_tributario),
     faturamentoEstimado: vazio(o.faturamento),
     quadroFuncionarios: vazio(o.quadro_funcionarios),
     programasEspeciais: Array.isArray(o.programas_especiais) ? o.programas_especiais.map(str).filter(Boolean) : [],

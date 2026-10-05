@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  NaoEncontradoError, RespostaInvalidaError, centavosBr, centavosPonto, corrigirTexto, dataAaaammdd, dataBr, parseRespostaApi, telefoneApi,
+  NaoEncontradoError, RespostaInvalidaError, centavosBr, centavosPonto, corrigirTexto, dataAaaammdd, dataBr, parseRespostaApi, regimeAtual, telefoneApi,
 } from "./parserApi";
 import { consultarCnpj } from "./clienteApi";
 import { cacheValido, inicioDoMesBrasil } from "./sincronizacao";
@@ -84,6 +84,13 @@ describe("auxiliares", () => {
     expect(dataAaaammdd("")).toBeNull();
     expect(dataBr("31/01/2024")).toBe("2024-01-31");
     expect(dataBr("2024-01-31")).toBeNull();
+  });
+
+  it("regime: historico corrido vira o regime do ano mais recente; texto simples passa", () => {
+    expect(regimeAtual("ANO 2022 LUCRO PRESUMIDO; ANO 2024 LUCRO REAL; ANO 2023 LUCRO PRESUMIDO")).toBe("LUCRO REAL");
+    expect(regimeAtual("ANO 2020 LUCRO PRESUMIDO, ")).toBe("LUCRO PRESUMIDO");
+    expect(regimeAtual("Presumido ou Lucro Real")).toBe("PRESUMIDO OU LUCRO REAL");
+    expect(regimeAtual("")).toBeNull();
   });
 
   it("telefone e texto", () => {
