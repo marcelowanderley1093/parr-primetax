@@ -1,0 +1,11 @@
+# /etc/systemd/system/parr-alerta@.service — e-mail de alerta quando uma unidade do PARR falha.
+# Disparado por OnFailure=parr-alerta@%p-%i.service (instancia = prefixo-instancia da unidade que falhou, ex.: parr-backup-prod).
+# Roda como parr (le /etc/parr/prod.env, 640 root:parr) com o SMTP do PARR; destino em ALERTA_EMAIL.
+# Teste manual: systemctl start parr-alerta@teste.service
+[Unit]
+Description=Alerta por e-mail de falha no PARR (%i)
+
+[Service]
+Type=oneshot
+User=parr
+ExecStart=/usr/bin/bash -lc 'cd /srv/parr/prod && set -a && . /etc/parr/prod.env && set +a && pnpm tsx scripts/alerta-falha.ts "%i"'

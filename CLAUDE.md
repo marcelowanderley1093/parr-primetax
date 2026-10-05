@@ -48,7 +48,7 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 ## Comandos
 - Typecheck: `pnpm check` (= `tsc --noEmit`) · Testes: `pnpm test` (= `vitest run`; inclui
   `server/**/*.test.ts` e `client/src/**/*.test.ts`) · Build: `pnpm build`.
-- Baseline atual: tsc 0 · **320 passed / 0 failed** (31 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
+- Baseline atual: tsc 0 · **323 passed / 0 failed** (32 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
   Nenhum teste depende de `.env`.
 - Migrações: editar `drizzle/schema.ts` → `pnpm exec drizzle-kit generate --name <descricao>` (exige
   `DATABASE_URL` definida no shell, qualquer valor; não conecta) → conferir o `.sql` gerado. **Nunca editar
@@ -111,7 +111,8 @@ Instalar sempre com devDependencies (`dist/index.js` importa `vite` estaticament
   token de convite pendente (e zera `mustChangePassword`).
 - Staging faz build no mesmo diretório: se `pnpm build` falhar no meio, `dist/public` fica parcial com o
   serviço antigo no ar (produção já usa `dist-next/`). Alinhar o staging ao `deploy-prod.sh`.
-- Cópia off-VPS dos backups (rclone/scp) e alerta de falha do timer — **obrigatório antes de aposentar a Manus**.
+- Cópia off-VPS dos backups e alerta de falha: implementados (`scripts/backup-offsite.sh`, Backblaze B2 criptografado,
+  `parr-alerta@`); roteiro e teste de restauração em `deploy/BACKUP-OFFSITE.md`.
 - `setupVite` importado estaticamente → `dist/index.js` depende de devDependencies (`vite`,
   `@vitejs/plugin-react`, `@tailwindcss/vite`).
 - Callback do Calendar sem `state`/CSRF; token do Pipedrive na query string (`?api_token=`).
