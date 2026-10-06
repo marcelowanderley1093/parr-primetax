@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Eye, RefreshCw, Save, Send, Users, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import HistoricoCarteira from "@/components/HistoricoCarteira";
 import { REGIOES, SITUACOES_CADASTRAIS, TAMANHO_MAX_GRUPOS, UFS, limparFiltro, parseCnaeDivisoes, type FiltroCarteira, type SituacaoCadastral } from "@shared/carteira";
 
 const n = (x: number) => x.toLocaleString("pt-BR");
@@ -84,6 +85,7 @@ export default function DistribuicaoTab() {
       utils.carteira.previa.invalidate();
       utils.carteira.previaRedistribuicao.invalidate();
       utils.carteira.previaCompletar.invalidate();
+      utils.carteira.historico.invalidate();
       utils.leads.coluna.invalidate();
       utils.leads.contagem.invalidate();
     },
@@ -91,7 +93,7 @@ export default function DistribuicaoTab() {
   });
 
   const salvar = trpc.carteira.salvarFiltro.useMutation({
-    onSuccess: () => { toast.success("Filtro salvo para o parceiro."); utils.carteira.filtroSalvo.invalidate(); utils.carteira.previaRedistribuicao.invalidate(); },
+    onSuccess: () => { toast.success("Filtro salvo para o parceiro."); utils.carteira.filtroSalvo.invalidate(); utils.carteira.previaRedistribuicao.invalidate(); utils.carteira.historico.invalidate(); },
     onError: e => toast.error(e.message),
   });
   const atribuir = trpc.carteira.atribuir.useMutation({
@@ -100,6 +102,7 @@ export default function DistribuicaoTab() {
       utils.carteira.parceiros.invalidate();
       utils.carteira.previa.invalidate();
       utils.carteira.previaCompletar.invalidate();
+      utils.carteira.historico.invalidate();
       utils.leads.coluna.invalidate();
       utils.leads.contagem.invalidate();
     },
@@ -297,6 +300,12 @@ export default function DistribuicaoTab() {
               </>
             ) : null}
           </div>
+
+          <HistoricoCarteira responsavelId={parceiro.id} onUsar={f => {
+            setForm(paraForm(f));
+            setAplicado(null);
+            toast.info("Critérios carregados no formulário. Revise e clique em Salvar filtro do parceiro para valer.");
+          }} />
         </section>
       )}
 
