@@ -5,9 +5,9 @@
 // lead sem grupo (ex.: veio da landing sem CNPJ) e um grupo de um so (chave = -id).
 // Grupo que ja tem dono nunca e redistribuido pelo filtro: os leads livres dele vao para o mesmo dono ("completar").
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { carteiras, empresas, leadEventos, leads, localUsers, type InsertLeadEvento } from "../drizzle/schema";
+import { carteiras, empresas, leadContatos, leadEventos, leadNotes, leads, leadStatusHistory, localUsers, type InsertLeadEvento } from "../drizzle/schema";
 import { getDb } from "./db";
-import { usaEmpresa, type FiltroCarteira } from "@shared/carteira";
+import { planoRedistribuicao, usaEmpresa, type FiltroCarteira, type GrupoNaCarteira } from "@shared/carteira";
 
 export type Ator = { localUserId: number | null; nome: string };
 
@@ -74,14 +74,32 @@ async function registrarEventos(eventos: InsertLeadEvento[]) {
 
 /** Atribui ate `maxGrupos` grupos livres (mais recentes primeiro) ao parceiro; os grupos vao inteiros. */
 export async function atribuir(f: FiltroCarteira, hoje: string, responsavelId: number, maxGrupos: number, ator: Ator) {
+  const gs = await gruposLivresQueAtendem(f, hoje, maxGrupos);
+  return atribuirGrupos(gs, responsavelId, ator, "atribuido");
+}
+
+/** Chaves dos grupos livres que atendem ao filtro, editais mais recentes primeiro (mesma ordem da distribuicao). */
+async function gruposLivresQueAtendem(f: FiltroCarteira, hoje: string, limite: number): Promise<number[]> {
+  if (limite <= 0) return [];
   const db = await banco();
   const where = and(livre, grupoSemDono, condicaoFiltro(f, hoje));
   const grupos = await db
     .select({ g: sql<number>`${chaveGrupo}`.as("g") })
     .from(leads).leftJoin(empresas, eq(empresas.id, leads.empresaId)).where(where)
-    .groupBy(sql`g`).orderBy(sql`MAX(${leads.ultimaPublicacao}) DESC`).limit(maxGrupos);
-  const gs = grupos.map(r => Number(r.g));
-  return atribuirGrupos(gs, responsavelId, ator, "atribuido");
+    .groupBy(sql`g`).orderBy(sql`MAX(${leads.ultimaPublicacao}) DESC`).limit(limite);
+  return grupos.map(r => Number(r.g));
+}
+
+/** Quantos leads livres ha nesses grupos (o que iria junto ao atribuir). */
+async function livresNosGrupos(chaves: number[]): Promise<number> {
+  const db = await banco();
+  let total = 0;
+  for (let i = 0; i < chaves.length; i += LOTE) {
+    const [r] = await db.select({ n: sql<number>`COUNT(*)` }).from(leads)
+      .where(and(livre, inArray(chaveGrupo, chaves.slice(i, i + LOTE))));
+    total += Number(r?.n ?? 0);
+  }
+  return total;
 }
 
 /** Atribui todos os leads livres dos grupos (chave >0 = grupoId; <0 = lead sem grupo) ao responsavel. */
@@ -231,6 +249,83 @@ export async function salvarFiltro(responsavelId: number, filtros: FiltroCarteir
   const db = await banco();
   await db.insert(carteiras).values({ responsavelId, filtros, atualizadoPorId: ator.localUserId })
     .onDuplicateKeyUpdate({ set: { filtros, atualizadoPorId: ator.localUserId } });
+}
+
+// --- Redistribuicao conforme o filtro salvo (decisao 06/10/2026; regras em shared/carteira.ts, planoRedistribuicao) ---
+
+export const MOTIVO_REDISTRIBUICAO = "redistribuicao (filtro alterado)";
+
+/**
+ * O lead tem alguma marca de trabalho (criterio estrito): saiu de "Novo lead" ou tem historico de coluna, nota,
+ * reuniao marcada, contato criado/editado a mao (lead_contatos.atualizadoPorUserId) ou arquivamento.
+ */
+export const leadTrabalhado = sql`(${leads.status} <> 'novo_lead' OR ${leads.arquivadoEm} IS NOT NULL
+  OR (${leads.calendarEventId} IS NOT NULL AND ${leads.calendarEventId} <> '')
+  OR EXISTS (SELECT 1 FROM ${leadNotes} WHERE ${leadNotes.leadId} = ${leads.id})
+  OR EXISTS (SELECT 1 FROM ${leadStatusHistory} WHERE ${leadStatusHistory.leadId} = ${leads.id})
+  OR EXISTS (SELECT 1 FROM ${leadContatos} WHERE ${leadContatos.leadId} = ${leads.id} AND ${leadContatos.atualizadoPorUserId} IS NOT NULL))`;
+
+/** Grupos da carteira do parceiro, com marca de trabalho e se atendem ao filtro. */
+async function gruposDaCarteira(responsavelId: number, f: FiltroCarteira, hoje: string): Promise<GrupoNaCarteira[]> {
+  const db = await banco();
+  const cond = condicaoFiltro(f, hoje) ?? sql`1 = 1`;
+  const rows = await db
+    .select({
+      g: sql<number>`${chaveGrupo}`.as("g"),
+      leads: sql<number>`COUNT(*)`,
+      ativos: sql<number>`SUM(CASE WHEN ${leads.arquivadoEm} IS NULL THEN 1 ELSE 0 END)`,
+      trabalhado: sql<number>`MAX(CASE WHEN ${leadTrabalhado} THEN 1 ELSE 0 END)`,
+      atende: sql<number>`MAX(CASE WHEN ${cond} THEN 1 ELSE 0 END)`,
+    })
+    .from(leads).leftJoin(empresas, eq(empresas.id, leads.empresaId))
+    .where(eq(leads.responsavelId, responsavelId)).groupBy(sql`g`);
+  return rows.map(r => ({
+    g: Number(r.g), leads: Number(r.leads), ativos: Number(r.ativos),
+    trabalhado: Number(r.trabalhado) === 1, atende: Number(r.atende) === 1,
+  }));
+}
+
+/** Previa: quantos grupos/leads saem, quantos ficam e quantos entram (sem gravar nada). */
+export async function previaRedistribuicao(responsavelId: number, f: FiltroCarteira, hoje: string) {
+  const plano = planoRedistribuicao(await gruposDaCarteira(responsavelId, f, hoje), f.tamanhoGrupos);
+  const entram = await gruposLivresQueAtendem(f, hoje, plano.vagas);
+  return {
+    saemGrupos: plano.saem.length,
+    saemLeads: plano.saem.reduce((s, x) => s + x.leads, 0),
+    ficamGrupos: plano.ficam,
+    tamanho: f.tamanhoGrupos ?? null,
+    entramGrupos: entram.length,
+    entramLeads: await livresNosGrupos(entram),
+  };
+}
+
+/** Executa: devolve os grupos parados que nao atendem (com trilha) e completa a carteira ate o tamanho salvo. */
+export async function redistribuir(responsavelId: number, f: FiltroCarteira, hoje: string, ator: Ator) {
+  const db = await banco();
+  const plano = planoRedistribuicao(await gruposDaCarteira(responsavelId, f, hoje), f.tamanhoGrupos);
+  const chaves = plano.saem.map(x => x.g);
+  const ids: number[] = [];
+  for (let i = 0; i < chaves.length; i += LOTE) {
+    const rows = await db.select({ id: leads.id }).from(leads)
+      .where(and(eq(leads.responsavelId, responsavelId), inArray(chaveGrupo, chaves.slice(i, i + LOTE))));
+    ids.push(...rows.map(r => r.id));
+  }
+  await db.transaction(async tx => {
+    for (let i = 0; i < ids.length; i += LOTE) {
+      // Guarda: so sai o que continua com este parceiro, em "Novo lead" e nao arquivado.
+      await tx.update(leads)
+        .set({ responsavelId: null, atribuidoEm: null, updatedAt: sql`\`updatedAt\`` })
+        .where(and(inArray(leads.id, ids.slice(i, i + LOTE)), eq(leads.responsavelId, responsavelId),
+          eq(leads.status, "novo_lead"), isNull(leads.arquivadoEm)));
+    }
+  });
+  await registrarEventos(ids.map(leadId => ({
+    leadId, tipo: "devolvido" as const, deResponsavelId: responsavelId, motivo: MOTIVO_REDISTRIBUICAO,
+    usuarioId: ator.localUserId, usuarioNome: ator.nome,
+  })));
+  const entram = await gruposLivresQueAtendem(f, hoje, plano.vagas);
+  const entrou = entram.length ? await atribuirGrupos(entram, responsavelId, ator, "atribuido") : { grupos: 0, leads: 0 };
+  return { saiu: { grupos: chaves.length, leads: ids.length }, entrou };
 }
 
 /** Conta leads de um parceiro (ativos) — usado para impedir atribuir a quem nao e parceiro. */

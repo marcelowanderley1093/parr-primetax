@@ -2,9 +2,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Eye, Save, Send, Users, Wand2 } from "lucide-react";
+import { Eye, RefreshCw, Save, Send, Users, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { REGIOES, SITUACOES_CADASTRAIS, UFS, limparFiltro, parseCnaeDivisoes, type FiltroCarteira, type SituacaoCadastral } from "@shared/carteira";
+import { REGIOES, SITUACOES_CADASTRAIS, TAMANHO_MAX_GRUPOS, UFS, limparFiltro, parseCnaeDivisoes, type FiltroCarteira, type SituacaoCadastral } from "@shared/carteira";
 
 const n = (x: number) => x.toLocaleString("pt-BR");
 
@@ -18,11 +18,12 @@ type Form = {
   publicacaoAte: string;
   somentePrazoAberto: boolean;
   incluirSemEmpresa: boolean;
+  tamanho: string;
 };
 
 const FORM_VAZIO: Form = {
   situacoes: [], dividaMin: "", dividaMax: "", ufs: [], cnae: "", publicacaoDe: "", publicacaoAte: "",
-  somentePrazoAberto: false, incluirSemEmpresa: false,
+  somentePrazoAberto: false, incluirSemEmpresa: false, tamanho: "",
 };
 
 const reais = (s: string) => {
@@ -35,6 +36,7 @@ function paraFiltro(f: Form): FiltroCarteira {
     situacoes: f.situacoes, dividaMin: reais(f.dividaMin), dividaMax: reais(f.dividaMax), ufs: f.ufs,
     cnaeDivisoes: parseCnaeDivisoes(f.cnae), publicacaoDe: f.publicacaoDe || null, publicacaoAte: f.publicacaoAte || null,
     somentePrazoAberto: f.somentePrazoAberto, incluirSemEmpresa: f.incluirSemEmpresa,
+    tamanhoGrupos: f.tamanho.trim() === "" ? null : Math.min(TAMANHO_MAX_GRUPOS, Number(f.tamanho) || 0),
   });
 }
 
@@ -44,6 +46,7 @@ function paraForm(f: FiltroCarteira | null | undefined): Form {
     situacoes: f.situacoes ?? [], dividaMin: f.dividaMin != null ? String(f.dividaMin) : "", dividaMax: f.dividaMax != null ? String(f.dividaMax) : "",
     ufs: f.ufs ?? [], cnae: (f.cnaeDivisoes ?? []).join(", "), publicacaoDe: f.publicacaoDe ?? "", publicacaoAte: f.publicacaoAte ?? "",
     somentePrazoAberto: !!f.somentePrazoAberto, incluirSemEmpresa: !!f.incluirSemEmpresa,
+    tamanho: f.tamanhoGrupos != null ? String(f.tamanhoGrupos) : "",
   };
 }
 
@@ -68,9 +71,27 @@ export default function DistribuicaoTab() {
 
   const previa = trpc.carteira.previa.useQuery({ filtro: aplicado ?? {} }, { enabled: aplicado !== null });
   const completarPrevia = trpc.carteira.previaCompletar.useQuery();
+  const [verRedistribuicao, setVerRedistribuicao] = useState(false);
+  useEffect(() => setVerRedistribuicao(false), [parceiroId]);
+  const redistPrevia = trpc.carteira.previaRedistribuicao.useQuery(
+    { responsavelId: parceiroId ?? 0 }, { enabled: parceiroId !== null && verRedistribuicao },
+  );
+  const redistribuir = trpc.carteira.redistribuir.useMutation({
+    onSuccess: r => {
+      toast.success(`Redistribuição feita: saíram ${n(r.saiu.leads)} lead(s) (${n(r.saiu.grupos)} grupos); entraram ${n(r.entrou.leads)} lead(s) (${n(r.entrou.grupos)} grupos).`);
+      setVerRedistribuicao(false);
+      utils.carteira.parceiros.invalidate();
+      utils.carteira.previa.invalidate();
+      utils.carteira.previaRedistribuicao.invalidate();
+      utils.carteira.previaCompletar.invalidate();
+      utils.leads.coluna.invalidate();
+      utils.leads.contagem.invalidate();
+    },
+    onError: e => toast.error(e.message),
+  });
 
   const salvar = trpc.carteira.salvarFiltro.useMutation({
-    onSuccess: () => { toast.success("Filtro salvo para o parceiro."); utils.carteira.filtroSalvo.invalidate(); },
+    onSuccess: () => { toast.success("Filtro salvo para o parceiro."); utils.carteira.filtroSalvo.invalidate(); utils.carteira.previaRedistribuicao.invalidate(); },
     onError: e => toast.error(e.message),
   });
   const atribuir = trpc.carteira.atribuir.useMutation({
@@ -91,6 +112,9 @@ export default function DistribuicaoTab() {
 
   const parceiro = parceiros.find(p => p.id === parceiroId);
   const max = Math.max(1, Math.min(20000, Number(maxGrupos) || 0));
+  // A redistribuicao usa o filtro SALVO: com alteracoes na tela sem salvar, o botao fica bloqueado.
+  const temSalvo = !!salvo.data;
+  const alteradoSemSalvar = JSON.stringify(paraFiltro(form)) !== JSON.stringify(limparFiltro(salvo.data ?? {}));
 
   return (
     <div className="max-w-5xl space-y-8">
@@ -200,6 +224,12 @@ export default function DistribuicaoTab() {
             </div>
           </div>
 
+          <div>
+            <div className="text-sm font-medium mb-1">Tamanho da carteira (grupos)</div>
+            <Input placeholder="ex.: 500" value={form.tamanho} onChange={e => setForm({ ...form, tamanho: e.target.value.replace(/\D/g, "") })} className="h-8 w-32" />
+            <p className="text-xs text-muted-foreground mt-1">Usado pela redistribuição para completar a carteira até esse número de grupos.</p>
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setAplicado(paraFiltro(form))}><Eye className="h-4 w-4 mr-1" /> Pré-visualizar</Button>
             <Button variant="outline" disabled={salvar.isPending} onClick={() => salvar.mutate({ responsavelId: parceiro.id, filtro: paraFiltro(form) })}>
@@ -232,6 +262,41 @@ export default function DistribuicaoTab() {
               ) : null}
             </div>
           )}
+
+          <div className="rounded-lg border border-border p-4 space-y-3">
+            <div className="text-sm font-semibold flex items-center gap-2"><RefreshCw className="h-4 w-4 text-primary" /> Redistribuir conforme o filtro salvo</div>
+            <p className="text-xs text-muted-foreground">
+              Saem da carteira os grupos parados (todos em Novo lead, sem nota, mudança de coluna, reunião, contato editado ou arquivamento)
+              que não atendem mais ao filtro salvo; eles voltam aos leads livres. Depois a carteira é completada até o tamanho salvo.
+              Um lead trabalhado segura o grupo inteiro com o parceiro.
+            </p>
+            {!temSalvo ? (
+              <p className="text-sm text-muted-foreground">Salve o filtro do parceiro para poder redistribuir.</p>
+            ) : alteradoSemSalvar ? (
+              <p className="text-sm text-amber-700">Há alterações no filtro que ainda não foram salvas. Salve antes de redistribuir.</p>
+            ) : !verRedistribuicao ? (
+              <Button variant="outline" size="sm" onClick={() => setVerRedistribuicao(true)}><Eye className="h-4 w-4 mr-1" /> Calcular redistribuição</Button>
+            ) : redistPrevia.isLoading ? (
+              <p className="text-sm text-muted-foreground">Calculando…</p>
+            ) : redistPrevia.data ? (
+              <>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-lg bg-muted/50 p-3"><div className="text-xl font-bold">{n(redistPrevia.data.saemLeads)}</div><div className="text-xs text-muted-foreground">leads saem ({n(redistPrevia.data.saemGrupos)} grupos)</div></div>
+                  <div className="rounded-lg bg-muted/50 p-3"><div className="text-xl font-bold">{n(redistPrevia.data.ficamGrupos)}</div><div className="text-xs text-muted-foreground">grupos ficam{redistPrevia.data.tamanho != null ? ` (tamanho salvo: ${n(redistPrevia.data.tamanho)})` : " (sem tamanho salvo)"}</div></div>
+                  <div className="rounded-lg bg-primary/10 p-3"><div className="text-xl font-bold text-primary">{n(redistPrevia.data.entramLeads)}</div><div className="text-xs text-muted-foreground">leads entram ({n(redistPrevia.data.entramGrupos)} grupos)</div></div>
+                </div>
+                <Button disabled={redistribuir.isPending || (redistPrevia.data.saemGrupos === 0 && redistPrevia.data.entramGrupos === 0)}
+                  onClick={() => {
+                    const d = redistPrevia.data!;
+                    if (confirm(`Redistribuir a carteira de ${parceiro.nome}?\n\nSaem ${n(d.saemLeads)} lead(s) (${n(d.saemGrupos)} grupos) e entram ${n(d.entramLeads)} lead(s) (${n(d.entramGrupos)} grupos).`)) {
+                      redistribuir.mutate({ responsavelId: parceiro.id });
+                    }
+                  }}>
+                  <RefreshCw className="h-4 w-4 mr-1" /> {redistribuir.isPending ? "Redistribuindo…" : "Redistribuir"}
+                </Button>
+              </>
+            ) : null}
+          </div>
         </section>
       )}
 

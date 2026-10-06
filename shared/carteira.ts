@@ -16,7 +16,33 @@ export type FiltroCarteira = {
   publicacaoAte?: string | null;
   somentePrazoAberto?: boolean;
   incluirSemEmpresa?: boolean; // leads ainda sem dados da EmpresAqui entram mesmo com filtros de empresa
+  tamanhoGrupos?: number | null; // tamanho desejado da carteira, em grupos (usado so pela redistribuicao)
 };
+
+export const TAMANHO_MAX_GRUPOS = 20000;
+
+/** Um grupo da carteira do parceiro, visto pela redistribuicao. */
+export type GrupoNaCarteira = {
+  g: number; // chave do grupo (grupoId, ou -id do lead sem grupo)
+  leads: number; // leads do grupo com este parceiro
+  ativos: number; // desses, nao arquivados
+  trabalhado: boolean; // algum lead tem marca de trabalho (nota, coluna, reuniao, contato editado, arquivamento)
+  atende: boolean; // algum lead atende ao filtro salvo
+};
+
+/**
+ * Redistribuicao conforme o filtro salvo (decisao 06/10/2026, Marcelo):
+ * - saem os grupos PARADOS (sem nenhuma marca de trabalho) que NAO atendem mais ao filtro; voltam aos leads livres;
+ * - um lead trabalhado segura o grupo inteiro; grupo parado que ainda atende fica;
+ * - vagas = quanto falta para o tamanho salvo (sem tamanho, nada entra; carteira acima do tamanho nao perde grupos
+ *   por isso).
+ */
+export function planoRedistribuicao(grupos: GrupoNaCarteira[], tamanho: number | null | undefined) {
+  const saem = grupos.filter(x => !x.trabalhado && !x.atende);
+  const ficam = grupos.filter(x => x.ativos > 0 && (x.trabalhado || x.atende)).length;
+  const vagas = tamanho != null && tamanho > 0 ? Math.max(0, tamanho - ficam) : 0;
+  return { saem, ficam, vagas };
+}
 
 export const REGIOES: Record<string, string[]> = {
   Norte: ["AC", "AM", "AP", "PA", "RO", "RR", "TO"],
@@ -58,6 +84,7 @@ export function limparFiltro(f: FiltroCarteira): FiltroCarteira {
   if (f.publicacaoAte) out.publicacaoAte = f.publicacaoAte;
   if (f.somentePrazoAberto) out.somentePrazoAberto = true;
   if (f.incluirSemEmpresa) out.incluirSemEmpresa = true;
+  if (f.tamanhoGrupos != null && Number.isInteger(f.tamanhoGrupos) && f.tamanhoGrupos > 0) out.tamanhoGrupos = f.tamanhoGrupos;
   return out;
 }
 
