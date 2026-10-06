@@ -790,6 +790,11 @@ export const appRouter = router({
       return carteira.getFiltroSalvo(input.responsavelId);
     }),
 
+    // Historico dos criterios de distribuicao do parceiro (so admin; decisao 06/10/2026).
+    historico: adminProcedure.input(z.object({ responsavelId: z.number().int() })).query(async ({ input }) => {
+      return carteira.historico(input.responsavelId);
+    }),
+
     salvarFiltro: adminProcedure.input(z.object({ responsavelId: z.number().int(), filtro: filtroInput })).mutation(async ({ input, ctx }) => {
       await exigirParceiroAtivo(input.responsavelId);
       await carteira.salvarFiltro(input.responsavelId, input.filtro, atorDe(ctx.user));

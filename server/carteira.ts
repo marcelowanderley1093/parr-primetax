@@ -5,7 +5,7 @@
 // lead sem grupo (ex.: veio da landing sem CNPJ) e um grupo de um so (chave = -id).
 // Grupo que ja tem dono nunca e redistribuido pelo filtro: os leads livres dele vao para o mesmo dono ("completar").
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { carteiras, empresas, leadContatos, leadEventos, leadNotes, leads, leadStatusHistory, localUsers, type InsertLeadEvento } from "../drizzle/schema";
+import { carteiraHistorico, carteiras, empresas, leadContatos, leadEventos, leadNotes, leads, leadStatusHistory, localUsers, type InsertCarteiraHistorico, type InsertLeadEvento } from "../drizzle/schema";
 import { getDb } from "./db";
 import { planoRedistribuicao, usaEmpresa, type FiltroCarteira, type GrupoNaCarteira } from "@shared/carteira";
 
@@ -75,7 +75,9 @@ async function registrarEventos(eventos: InsertLeadEvento[]) {
 /** Atribui ate `maxGrupos` grupos livres (mais recentes primeiro) ao parceiro; os grupos vao inteiros. */
 export async function atribuir(f: FiltroCarteira, hoje: string, responsavelId: number, maxGrupos: number, ator: Ator) {
   const gs = await gruposLivresQueAtendem(f, hoje, maxGrupos);
-  return atribuirGrupos(gs, responsavelId, ator, "atribuido");
+  const r = await atribuirGrupos(gs, responsavelId, ator, "atribuido");
+  await registrarHistorico({ responsavelId, acao: "atribuicao", filtros: f, entrouGrupos: r.grupos, entrouLeads: r.leads, usuarioId: ator.localUserId, usuarioNome: ator.nome });
+  return r;
 }
 
 /** Chaves dos grupos livres que atendem ao filtro, editais mais recentes primeiro (mesma ordem da distribuicao). */
@@ -245,10 +247,29 @@ export async function getFiltroSalvo(responsavelId: number): Promise<FiltroCarte
   return (c?.filtros as FiltroCarteira) ?? null;
 }
 
+/**
+ * Salva o filtro e registra no historico, na mesma transacao. No primeiro salvamento depois que o historico passou a
+ * existir, o filtro anterior (de `carteiras`, com a data e o autor reais) entra antes no historico, para nao se perder.
+ */
 export async function salvarFiltro(responsavelId: number, filtros: FiltroCarteira, ator: Ator) {
   const db = await banco();
-  await db.insert(carteiras).values({ responsavelId, filtros, atualizadoPorId: ator.localUserId })
-    .onDuplicateKeyUpdate({ set: { filtros, atualizadoPorId: ator.localUserId } });
+  await db.transaction(async tx => {
+    const [jaTem] = await tx.select({ id: carteiraHistorico.id }).from(carteiraHistorico)
+      .where(and(eq(carteiraHistorico.responsavelId, responsavelId), eq(carteiraHistorico.acao, "filtro_salvo"))).limit(1);
+    if (!jaTem) {
+      const [antes] = await tx.select({ filtros: carteiras.filtros, updatedAt: carteiras.updatedAt, usuarioId: carteiras.atualizadoPorId, nome: localUsers.nome })
+        .from(carteiras).leftJoin(localUsers, eq(localUsers.id, carteiras.atualizadoPorId))
+        .where(eq(carteiras.responsavelId, responsavelId)).limit(1);
+      if (antes) {
+        await tx.insert(carteiraHistorico).values({
+          responsavelId, acao: "filtro_salvo", filtros: antes.filtros ?? {}, usuarioId: antes.usuarioId, usuarioNome: antes.nome, createdAt: antes.updatedAt,
+        });
+      }
+    }
+    await tx.insert(carteiras).values({ responsavelId, filtros, atualizadoPorId: ator.localUserId })
+      .onDuplicateKeyUpdate({ set: { filtros, atualizadoPorId: ator.localUserId } });
+    await tx.insert(carteiraHistorico).values({ responsavelId, acao: "filtro_salvo", filtros, usuarioId: ator.localUserId, usuarioNome: ator.nome });
+  });
 }
 
 // --- Redistribuicao conforme o filtro salvo (decisao 06/10/2026; regras em shared/carteira.ts, planoRedistribuicao) ---
@@ -325,6 +346,10 @@ export async function redistribuir(responsavelId: number, f: FiltroCarteira, hoj
   })));
   const entram = await gruposLivresQueAtendem(f, hoje, plano.vagas);
   const entrou = entram.length ? await atribuirGrupos(entram, responsavelId, ator, "atribuido") : { grupos: 0, leads: 0 };
+  await registrarHistorico({
+    responsavelId, acao: "redistribuicao", filtros: f, saiuGrupos: chaves.length, saiuLeads: ids.length,
+    entrouGrupos: entrou.grupos, entrouLeads: entrou.leads, usuarioId: ator.localUserId, usuarioNome: ator.nome,
+  });
   return { saiu: { grupos: chaves.length, leads: ids.length }, entrou };
 }
 
@@ -333,4 +358,44 @@ export async function ehParceiroAtivo(localUserId: number): Promise<boolean> {
   const db = await banco();
   const [u] = await db.select({ role: localUsers.role, active: localUsers.active }).from(localUsers).where(eq(localUsers.id, localUserId)).limit(1);
   return !!u && u.role === "comercial" && u.active === 1;
+}
+
+// --- Historico dos criterios de distribuicao (decisao 06/10/2026; tabela carteira_historico, so admin ve) ---
+
+/**
+ * Registra uma linha no historico. Atribuicao e redistribuicao ja foram gravadas quando isto roda: uma falha aqui
+ * nao desfaz o trabalho, so deixa de registrar (log com o nome do erro, sem dados).
+ */
+async function registrarHistorico(h: InsertCarteiraHistorico) {
+  try {
+    const db = await banco();
+    await db.insert(carteiraHistorico).values(h);
+  } catch (e) {
+    console.warn("[carteira] historico nao registrado:", (e as Error).name);
+  }
+}
+
+/**
+ * Historico do parceiro, mais recente primeiro (ate 100 linhas). Antes do historico existir, o filtro salvo vinha so
+ * em `carteiras` (data e autor do ultimo salvamento): se nenhuma linha "filtro_salvo" houver, ele entra como a
+ * primeira linha, marcada `anterior`.
+ */
+export async function historico(responsavelId: number) {
+  const db = await banco();
+  const linhas = await db.select().from(carteiraHistorico).where(eq(carteiraHistorico.responsavelId, responsavelId))
+    .orderBy(sql`${carteiraHistorico.createdAt} DESC, ${carteiraHistorico.id} DESC`).limit(100);
+  const out = linhas.map(l => ({ ...l, filtros: (l.filtros ?? {}) as FiltroCarteira, anterior: false }));
+  if (!out.some(l => l.acao === "filtro_salvo")) {
+    const [c] = await db.select({ filtros: carteiras.filtros, updatedAt: carteiras.updatedAt, nome: localUsers.nome, usuarioId: carteiras.atualizadoPorId })
+      .from(carteiras).leftJoin(localUsers, eq(localUsers.id, carteiras.atualizadoPorId))
+      .where(eq(carteiras.responsavelId, responsavelId)).limit(1);
+    if (c) {
+      out.push({
+        id: 0, responsavelId, acao: "filtro_salvo" as const, filtros: (c.filtros ?? {}) as FiltroCarteira,
+        saiuGrupos: null, saiuLeads: null, entrouGrupos: null, entrouLeads: null,
+        usuarioId: c.usuarioId, usuarioNome: c.nome, createdAt: c.updatedAt, anterior: true,
+      });
+    }
+  }
+  return out;
 }

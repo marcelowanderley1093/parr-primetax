@@ -280,3 +280,23 @@ export const leadEventos = mysqlTable("lead_eventos", {
 
 export type LeadEvento = typeof leadEventos.$inferSelect;
 export type InsertLeadEvento = typeof leadEventos.$inferInsert;
+
+// Historico dos criterios de distribuicao por parceiro (decisao 06/10/2026): cada filtro salvo, atribuicao e
+// redistribuicao, com o filtro daquele momento e os numeros. So recebe linhas novas. responsavelId/usuarioId ->
+// local_users.id (usuarioNome guardado para leitura sem join).
+export const carteiraHistorico = mysqlTable("carteira_historico", {
+  id: int("id").autoincrement().primaryKey(),
+  responsavelId: int("responsavelId").notNull(),
+  acao: mysqlEnum("acao", ["filtro_salvo", "atribuicao", "redistribuicao"]).notNull(),
+  filtros: json("filtros").notNull(),
+  saiuGrupos: int("saiuGrupos"),
+  saiuLeads: int("saiuLeads"),
+  entrouGrupos: int("entrouGrupos"),
+  entrouLeads: int("entrouLeads"),
+  usuarioId: int("usuarioId"),
+  usuarioNome: varchar("usuarioNome", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, t => [index("carteira_historico_responsavel_idx").on(t.responsavelId, t.createdAt)]);
+
+export type CarteiraHistorico = typeof carteiraHistorico.$inferSelect;
+export type InsertCarteiraHistorico = typeof carteiraHistorico.$inferInsert;

@@ -48,7 +48,7 @@ Repositório: github.com/marcelowanderley1093/parr-primetax (privado).
 ## Comandos
 - Typecheck: `pnpm check` (= `tsc --noEmit`) · Testes: `pnpm test` (= `vitest run`; inclui
   `server/**/*.test.ts` e `client/src/**/*.test.ts`) · Build: `pnpm build`.
-- Baseline atual: tsc 0 · **341 passed / 0 failed** (33 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
+- Baseline atual: tsc 0 · **345 passed / 0 failed** (33 arquivos; inclui `scripts/**/*.test.ts`) · build ok.
   Nenhum teste depende de `.env`.
 - Migrações: editar `drizzle/schema.ts` → `pnpm exec drizzle-kit generate --name <descricao>` (exige
   `DATABASE_URL` definida no shell, qualquer valor; não conecta) → conferir o `.sql` gerado. **Nunca editar
@@ -130,7 +130,8 @@ Instalar sempre com devDependencies (`dist/index.js` importa `vite` estaticament
   as rotas (`server/acesso.ts`); admin vê tudo. Excluir lead: só admin; parceiro arquiva com motivo.
   Trilha em `lead_eventos`; filtro salvo por parceiro em `carteiras` (com `tamanhoGrupos`). **Redistribuição** (06/10/2026):
   grupos parados (sem nota, coluna, reunião, contato editado ou arquivamento) que não atendem ao filtro salvo voltam
-  aos livres e a carteira é completada até o tamanho (`planoRedistribuicao`, `carteira.redistribuir`).
+  aos livres e a carteira é completada até o tamanho (`planoRedistribuicao`, `carteira.redistribuir`). Histórico dos
+  critérios (filtro salvo, atribuição, redistribuição) em `carteira_historico` (migração 0013), só admin vê.
 - **Empresa** (`empresas`, 1 por CNPJ, EmpresAqui): `dados.csv` / `dados.api` em JSON; EmpresAqui nunca toca
   nome/telefone/CPF/contatos do lead. Contatos editáveis em `lead_contatos`; CPF completo em `leads.cpf`.
 - **Prazo de impugnação**: publicação + 30 dias corridos, prorrogado ao 1º dia útil só em fim de semana e feriado
