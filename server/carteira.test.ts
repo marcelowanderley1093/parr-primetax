@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import type { TrpcContext } from "./_core/context";
-import { limparFiltro, parseCnaeDivisoes, planoRedistribuicao, usaEmpresa, type GrupoNaCarteira } from "../shared/carteira";
+import { descreverFiltro, limparFiltro, parseCnaeDivisoes, planoRedistribuicao, usaEmpresa, type GrupoNaCarteira } from "../shared/carteira";
 
 // Banco simulado: lead 1 e do parceiro 10; lead 2 do parceiro 20. Parceiros ativos: 10 e 20.
 const DONOS: Record<number, number | null> = { 1: 10, 2: 20 };
@@ -24,6 +24,7 @@ vi.mock("./carteira", async importOriginal => {
     getFiltroSalvo: vi.fn(async (id: number) => (id === 10 ? { ufs: ["SP"], tamanhoGrupos: 50, situacoes: [] } : null)),
     previaRedistribuicao: vi.fn(async () => ({ saemGrupos: 1, saemLeads: 2, ficamGrupos: 49, tamanho: 50, entramGrupos: 1, entramLeads: 3 })),
     redistribuir: vi.fn(async () => ({ saiu: { grupos: 1, leads: 2 }, entrou: { grupos: 1, leads: 3 } })),
+    historico: vi.fn(async () => [{ id: 1, acao: "filtro_salvo", filtros: { ufs: ["SP"] }, anterior: false }]),
     carteiraDoLead: vi.fn(async (leadId: number) => ({
       responsavelId: DONOS[leadId], responsavelNome: "Parceiro", atribuidoEm: null, arquivadoEm: null, arquivadoMotivo: null, grupoId: 5, leadsNoGrupo: 2,
       eventos: [
@@ -108,6 +109,29 @@ describe("redistribuicao: regras (planoRedistribuicao)", () => {
     expect(r.sql).toMatch(/FROM `lead_notes` WHERE `lead_notes`\.`leadId` = `leads`\.`id`/);
     expect(r.sql).toMatch(/FROM `lead_status_history` WHERE `lead_status_history`\.`leadId` = `leads`\.`id`/);
     expect(r.sql).toMatch(/`lead_contatos`\.`atualizadoPorUserId` IS NOT NULL/);
+  });
+});
+
+describe("historico: descreverFiltro", () => {
+  it("criterios em portugues; regiao inteira vira o nome da regiao", () => {
+    const d = descreverFiltro({
+      situacoes: ["ATIVA"], dividaMin: 100000, ufs: ["PR", "RS", "SC", "MG"], cnaeDivisoes: ["86"],
+      publicacaoDe: "2026-01-01", publicacaoAte: "2026-06-30", somentePrazoAberto: true, tamanhoGrupos: 1500,
+    });
+    expect(d[0]).toBe("Situação: ATIVA");
+    expect(d[1]).toMatch(/^Dívida ≥ R\$\s?100\.000$/);
+    expect(d.slice(2)).toEqual([
+      "UF: Sul, MG", "CNAE: 86", "Publicação: 01/01/2026 a 30/06/2026", "Só prazo aberto", "Tamanho: 1.500 grupos",
+    ]);
+  });
+
+  it("faixa de divida e datas abertas", () => {
+    expect(descreverFiltro({ dividaMin: 10, dividaMax: 20 })[0]).toMatch(/^Dívida: R\$\s?10 a R\$\s?20$/);
+    expect(descreverFiltro({ publicacaoAte: "2026-03-31" })).toEqual(["Publicação até 31/03/2026"]);
+  });
+
+  it("filtro vazio = Sem criterios", () => {
+    expect(descreverFiltro({})).toEqual(["Sem critérios"]);
   });
 });
 
@@ -196,6 +220,13 @@ describe("rotas da carteira: permissoes", () => {
     await expect(a.carteira.previaRedistribuicao({ responsavelId: 20 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(a.carteira.redistribuir({ responsavelId: 99 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(carteira.redistribuir).toHaveBeenCalledTimes(1);
+  });
+
+  it("historico de criterios: so admin", async () => {
+    await expect(caller("comercial").carteira.historico({ responsavelId: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(carteira.historico).not.toHaveBeenCalled();
+    await expect(caller("admin").carteira.historico({ responsavelId: 10 })).resolves.toHaveLength(1);
+    expect(carteira.historico).toHaveBeenCalledWith(10);
   });
 
   it("tamanho da carteira invalido e recusado ao salvar o filtro", async () => {

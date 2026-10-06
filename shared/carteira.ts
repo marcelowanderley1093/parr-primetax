@@ -92,3 +92,33 @@ export function limparFiltro(f: FiltroCarteira): FiltroCarteira {
 export function usaEmpresa(f: FiltroCarteira): boolean {
   return !!(f.situacoes?.length || f.dividaMin != null || f.dividaMax != null || f.ufs?.length || f.cnaeDivisoes?.length);
 }
+
+/** Data ISO (AAAA-MM-DD) -> dd/mm/aaaa. */
+function dataBr(iso: string): string {
+  const [a, m, d] = iso.split("-");
+  return d && m && a ? `${d}/${m}/${a}` : iso;
+}
+
+const reais = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+
+/** Criterios do filtro em portugues, um item por criterio (historico da carteira). Filtro vazio = "Sem criterios". */
+export function descreverFiltro(f: FiltroCarteira): string[] {
+  const out: string[] = [];
+  if (f.situacoes?.length) out.push(`Situação: ${f.situacoes.join(", ")}`);
+  if (f.dividaMin != null && f.dividaMax != null) out.push(`Dívida: ${reais(f.dividaMin)} a ${reais(f.dividaMax)}`);
+  else if (f.dividaMin != null) out.push(`Dívida ≥ ${reais(f.dividaMin)}`);
+  else if (f.dividaMax != null) out.push(`Dívida ≤ ${reais(f.dividaMax)}`);
+  if (f.ufs?.length) {
+    const regioes = Object.entries(REGIOES).filter(([, ufs]) => ufs.every(u => f.ufs!.includes(u)));
+    const soltas = f.ufs.filter(u => !regioes.some(([, ufs]) => ufs.includes(u))).sort();
+    out.push(`UF: ${[...regioes.map(([r]) => r), ...soltas].join(", ")}`);
+  }
+  if (f.cnaeDivisoes?.length) out.push(`CNAE: ${f.cnaeDivisoes.join(", ")}`);
+  if (f.publicacaoDe && f.publicacaoAte) out.push(`Publicação: ${dataBr(f.publicacaoDe)} a ${dataBr(f.publicacaoAte)}`);
+  else if (f.publicacaoDe) out.push(`Publicação desde ${dataBr(f.publicacaoDe)}`);
+  else if (f.publicacaoAte) out.push(`Publicação até ${dataBr(f.publicacaoAte)}`);
+  if (f.somentePrazoAberto) out.push("Só prazo aberto");
+  if (f.incluirSemEmpresa) out.push("Inclui sem EmpresAqui");
+  if (f.tamanhoGrupos != null) out.push(`Tamanho: ${f.tamanhoGrupos.toLocaleString("pt-BR")} grupos`);
+  return out.length ? out : ["Sem critérios"];
+}
