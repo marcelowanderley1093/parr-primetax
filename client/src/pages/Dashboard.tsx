@@ -36,6 +36,7 @@ import DistribuicaoTab from "@/components/DistribuicaoTab";
 import IntegracoesSection from "@/components/IntegracoesSection";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hojeIso, situacaoPrazo, type SituacaoPrazo } from "@shared/editais";
+import { diaDoEvento, horaDoEvento } from "@shared/agenda";
 
 type LeadStatus = "novo_lead" | "contato_inicial" | "reuniao_agendada" | "proposta_enviada";
 
@@ -413,8 +414,8 @@ function CalendarTab() {
   const getEventsForDate = (date: Date) => {
     if (!calendarData?.events) return [];
     return calendarData.events.filter((ev: any) => {
-      const evDate = new Date(ev.start);
-      return evDate.getFullYear() === date.getFullYear() && evDate.getMonth() === date.getMonth() && evDate.getDate() === date.getDate();
+      const dia = diaDoEvento(ev.start);
+      return !!dia && dia.ano === date.getFullYear() && dia.mes === date.getMonth() && dia.dia === date.getDate();
     });
   };
 
@@ -511,7 +512,7 @@ function CalendarTab() {
                     }
                     return (
                       <div key={j} className={`text-[10px] ${tagColor} rounded px-1 py-0.5 mb-0.5 truncate`} title={ev.title}>
-                        {ev.start ? new Date(ev.start).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : ""} {ev.title}
+                        {horaDoEvento(ev)} {ev.title}
                       </div>
                     );
                   })}
