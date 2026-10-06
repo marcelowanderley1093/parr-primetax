@@ -20,7 +20,7 @@ import * as carteira from "./carteira";
 import * as sincronizacao from "./empresaqui/sincronizacao";
 import { MENSAGEM_ERRO_API } from "./empresaqui/clienteApi";
 import { chaveCnpjLead } from "./empresaqui/importacao";
-import { MOTIVOS_ARQUIVAMENTO, SITUACOES_CADASTRAIS, UFS, limparFiltro } from "@shared/carteira";
+import { MOTIVOS_ARQUIVAMENTO, SITUACOES_CADASTRAIS, TAMANHO_MAX_GRUPOS, UFS, limparFiltro } from "@shared/carteira";
 import { eventoDoGoogle, type EventoAgenda } from "@shared/agenda";
 import { parseLocalOpenId } from "./localUsersHelpers";
 import { ArquivoInvalidoError, contarLeadsPorCnpj, decodificarArquivo, linhaEmpresa, resumirImportacao } from "./empresaqui/importacao";
@@ -37,6 +37,7 @@ const filtroInput = z.object({
   publicacaoAte: dataIso.nullable().optional(),
   somentePrazoAberto: z.boolean().optional(),
   incluirSemEmpresa: z.boolean().optional(),
+  tamanhoGrupos: z.number().int().min(1).max(TAMANHO_MAX_GRUPOS).nullable().optional(),
 }).transform(limparFiltro);
 
 /** Data de hoje no Brasil (o servidor roda em UTC). */
@@ -74,6 +75,13 @@ async function sincronizarComMensagem(cnpj14: string, userId: number, forcar: bo
 
 async function exigirParceiroAtivo(id: number) {
   if (!(await carteira.ehParceiroAtivo(id))) throw new TRPCError({ code: "BAD_REQUEST", message: "Parceiro inexistente, inativo ou sem perfil comercial" });
+}
+
+/** Filtro salvo do parceiro, normalizado; sem filtro salvo, a redistribuicao nao roda. */
+async function filtroSalvoOuErro(responsavelId: number) {
+  const salvo = await carteira.getFiltroSalvo(responsavelId);
+  if (!salvo) throw new TRPCError({ code: "BAD_REQUEST", message: "Salve o filtro do parceiro antes de redistribuir" });
+  return limparFiltro(salvo);
 }
 
 // Visao do Kanban pedida pela tela (o servidor restringe o parceiro a propria carteira; ver acesso.visaoKanban).
@@ -799,6 +807,18 @@ export const appRouter = router({
     })).mutation(async ({ input, ctx }) => {
       await exigirParceiroAtivo(input.responsavelId);
       return carteira.atribuir(input.filtro, hojeBrasil(), input.responsavelId, input.maxGrupos, atorDe(ctx.user));
+    }),
+
+    // Redistribuicao conforme o filtro SALVO do parceiro (decisao 06/10/2026): previa e execucao.
+    previaRedistribuicao: adminProcedure.input(z.object({ responsavelId: z.number().int() })).query(async ({ input }) => {
+      const filtro = await filtroSalvoOuErro(input.responsavelId);
+      return carteira.previaRedistribuicao(input.responsavelId, filtro, hojeBrasil());
+    }),
+
+    redistribuir: adminProcedure.input(z.object({ responsavelId: z.number().int() })).mutation(async ({ input, ctx }) => {
+      await exigirParceiroAtivo(input.responsavelId);
+      const filtro = await filtroSalvoOuErro(input.responsavelId);
+      return carteira.redistribuir(input.responsavelId, filtro, hojeBrasil(), atorDe(ctx.user));
     }),
 
     previaCompletar: adminProcedure.query(async () => carteira.previaCompletar()),

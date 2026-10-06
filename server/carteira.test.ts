@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import type { TrpcContext } from "./_core/context";
-import { limparFiltro, parseCnaeDivisoes, usaEmpresa } from "../shared/carteira";
+import { limparFiltro, parseCnaeDivisoes, planoRedistribuicao, usaEmpresa, type GrupoNaCarteira } from "../shared/carteira";
 
 // Banco simulado: lead 1 e do parceiro 10; lead 2 do parceiro 20. Parceiros ativos: 10 e 20.
 const DONOS: Record<number, number | null> = { 1: 10, 2: 20 };
@@ -20,6 +20,10 @@ vi.mock("./carteira", async importOriginal => {
     reabrir: vi.fn(async () => undefined),
     transferir: vi.fn(async () => ({ leads: 2 })),
     parceiros: vi.fn(async () => []),
+    // Filtro salvo: parceiro 10 tem (com chave vazia, que a rota normaliza); parceiro 20 nao tem.
+    getFiltroSalvo: vi.fn(async (id: number) => (id === 10 ? { ufs: ["SP"], tamanhoGrupos: 50, situacoes: [] } : null)),
+    previaRedistribuicao: vi.fn(async () => ({ saemGrupos: 1, saemLeads: 2, ficamGrupos: 49, tamanho: 50, entramGrupos: 1, entramLeads: 3 })),
+    redistribuir: vi.fn(async () => ({ saiu: { grupos: 1, leads: 2 }, entrou: { grupos: 1, leads: 3 } })),
     carteiraDoLead: vi.fn(async (leadId: number) => ({
       responsavelId: DONOS[leadId], responsavelNome: "Parceiro", atribuidoEm: null, arquivadoEm: null, arquivadoMotivo: null, grupoId: 5, leadsNoGrupo: 2,
       eventos: [
@@ -53,6 +57,57 @@ describe("regras do filtro (shared/carteira)", () => {
     expect(limparFiltro({ situacoes: [], dividaMin: null, ufs: [], publicacaoDe: "", somentePrazoAberto: false })).toEqual({});
     expect(usaEmpresa({ publicacaoDe: "2026-01-01" })).toBe(false);
     expect(usaEmpresa({ dividaMin: 0 })).toBe(true);
+  });
+});
+
+describe("redistribuicao: regras (planoRedistribuicao)", () => {
+  const g = (x: Partial<GrupoNaCarteira> & { g: number }): GrupoNaCarteira => ({ leads: 1, ativos: 1, trabalhado: false, atende: true, ...x });
+
+  it("sai so o grupo parado que nao atende mais ao filtro", () => {
+    const p = planoRedistribuicao([
+      g({ g: 1, atende: false }), // parado e fora do filtro: sai
+      g({ g: 2, atende: false, trabalhado: true }), // trabalhado: fica mesmo fora do filtro
+      g({ g: 3 }), // parado mas atende: fica
+    ], 10);
+    expect(p.saem.map(x => x.g)).toEqual([1]);
+    expect(p.ficam).toBe(2);
+    expect(p.vagas).toBe(8);
+  });
+
+  it("nada sai quando todos atendem ou estao trabalhados", () => {
+    const p = planoRedistribuicao([g({ g: 1 }), g({ g: 2, atende: false, trabalhado: true })], 2);
+    expect(p.saem).toEqual([]);
+    expect(p.vagas).toBe(0);
+  });
+
+  it("sem tamanho salvo nada entra; carteira acima do tamanho nao recebe nem perde por isso", () => {
+    expect(planoRedistribuicao([g({ g: 1 })], null).vagas).toBe(0);
+    const acima = planoRedistribuicao([g({ g: 1 }), g({ g: 2 }), g({ g: 3 })], 2);
+    expect(acima.vagas).toBe(0);
+    expect(acima.saem).toEqual([]);
+  });
+
+  it("grupo so com arquivados nao ocupa vaga", () => {
+    const p = planoRedistribuicao([g({ g: 1, ativos: 0, trabalhado: true }), g({ g: 2 })], 3);
+    expect(p.ficam).toBe(1);
+    expect(p.vagas).toBe(2);
+  });
+
+  it("limparFiltro guarda o tamanho so se for inteiro positivo", () => {
+    expect(limparFiltro({ tamanhoGrupos: 500 })).toEqual({ tamanhoGrupos: 500 });
+    expect(limparFiltro({ tamanhoGrupos: 0 })).toEqual({});
+    expect(limparFiltro({ tamanhoGrupos: null })).toEqual({});
+    expect(limparFiltro({ tamanhoGrupos: 1.5 })).toEqual({});
+  });
+
+  it("marca de trabalho (SQL) cobre coluna, arquivamento, reuniao, nota, historico e contato editado", () => {
+    const r = new MySqlDialect().sqlToQuery(carteira.leadTrabalhado);
+    expect(r.sql).toMatch(/`leads`\.`status` <> 'novo_lead'/);
+    expect(r.sql).toMatch(/`leads`\.`arquivadoEm` IS NOT NULL/);
+    expect(r.sql).toMatch(/`leads`\.`calendarEventId` IS NOT NULL/);
+    expect(r.sql).toMatch(/FROM `lead_notes` WHERE `lead_notes`\.`leadId` = `leads`\.`id`/);
+    expect(r.sql).toMatch(/FROM `lead_status_history` WHERE `lead_status_history`\.`leadId` = `leads`\.`id`/);
+    expect(r.sql).toMatch(/`lead_contatos`\.`atualizadoPorUserId` IS NOT NULL/);
   });
 });
 
@@ -124,6 +179,30 @@ describe("rotas da carteira: permissoes", () => {
     await expect(a.carteira.previa({ filtro: { cnaeDivisoes: ["8"] } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(a.carteira.previa({ filtro: { publicacaoDe: "01/01/2026" } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(a.carteira.atribuir({ responsavelId: 10, filtro: {}, maxGrupos: 20001 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("redistribuicao: so admin; usa o filtro SALVO normalizado; sem filtro salvo ou parceiro inativo e recusado", async () => {
+    const p = caller("comercial");
+    await expect(p.carteira.previaRedistribuicao({ responsavelId: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(p.carteira.redistribuir({ responsavelId: 10 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(carteira.redistribuir).not.toHaveBeenCalled();
+
+    const a = caller("admin");
+    await expect(a.carteira.previaRedistribuicao({ responsavelId: 10 })).resolves.toMatchObject({ saemGrupos: 1, entramLeads: 3 });
+    await expect(a.carteira.redistribuir({ responsavelId: 10 })).resolves.toEqual({ saiu: { grupos: 1, leads: 2 }, entrou: { grupos: 1, leads: 3 } });
+    expect(carteira.redistribuir).toHaveBeenCalledWith(10, { ufs: ["SP"], tamanhoGrupos: 50 }, expect.any(String), { localUserId: 1, nome: "Admin" });
+
+    await expect(a.carteira.redistribuir({ responsavelId: 20 })).rejects.toMatchObject({ code: "BAD_REQUEST", message: "Salve o filtro do parceiro antes de redistribuir" });
+    await expect(a.carteira.previaRedistribuicao({ responsavelId: 20 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.redistribuir({ responsavelId: 99 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(carteira.redistribuir).toHaveBeenCalledTimes(1);
+  });
+
+  it("tamanho da carteira invalido e recusado ao salvar o filtro", async () => {
+    const a = caller("admin");
+    await expect(a.carteira.salvarFiltro({ responsavelId: 10, filtro: { tamanhoGrupos: 0 } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.salvarFiltro({ responsavelId: 10, filtro: { tamanhoGrupos: 20001 } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(a.carteira.salvarFiltro({ responsavelId: 10, filtro: { tamanhoGrupos: 2.5 } })).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
   it("historico: parceiro nao ve nomes nem ids de outros parceiros; admin ve tudo", async () => {
