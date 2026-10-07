@@ -279,11 +279,13 @@ export const MOTIVO_REDISTRIBUICAO = "redistribuicao (filtro alterado)";
 /**
  * O lead tem alguma marca de trabalho (criterio estrito): saiu de "Novo lead" ou tem historico de coluna, nota,
  * reuniao marcada, contato criado/editado a mao (lead_contatos.atualizadoPorUserId) ou arquivamento.
+ * Historico de coluna = so movimentacao real (fromStatus preenchido): a linha de criacao ("Sistema"/"Importacao
+ * Excel"/Manus, fromStatus nulo -> novo_lead) nao e trabalho (corrigido em 07/10/2026; prendia grupos inteiros).
  */
 export const leadTrabalhado = sql`(${leads.status} <> 'novo_lead' OR ${leads.arquivadoEm} IS NOT NULL
   OR (${leads.calendarEventId} IS NOT NULL AND ${leads.calendarEventId} <> '')
   OR EXISTS (SELECT 1 FROM ${leadNotes} WHERE ${leadNotes.leadId} = ${leads.id})
-  OR EXISTS (SELECT 1 FROM ${leadStatusHistory} WHERE ${leadStatusHistory.leadId} = ${leads.id})
+  OR EXISTS (SELECT 1 FROM ${leadStatusHistory} WHERE ${leadStatusHistory.leadId} = ${leads.id} AND ${leadStatusHistory.fromStatus} IS NOT NULL)
   OR EXISTS (SELECT 1 FROM ${leadContatos} WHERE ${leadContatos.leadId} = ${leads.id} AND ${leadContatos.atualizadoPorUserId} IS NOT NULL))`;
 
 /** Grupos da carteira do parceiro, com marca de trabalho e se atendem ao filtro. */

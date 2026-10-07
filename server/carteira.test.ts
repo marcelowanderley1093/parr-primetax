@@ -107,7 +107,9 @@ describe("redistribuicao: regras (planoRedistribuicao)", () => {
     expect(r.sql).toMatch(/`leads`\.`arquivadoEm` IS NOT NULL/);
     expect(r.sql).toMatch(/`leads`\.`calendarEventId` IS NOT NULL/);
     expect(r.sql).toMatch(/FROM `lead_notes` WHERE `lead_notes`\.`leadId` = `leads`\.`id`/);
-    expect(r.sql).toMatch(/FROM `lead_status_history` WHERE `lead_status_history`\.`leadId` = `leads`\.`id`/);
+    // Historico: so movimentacao real conta; a linha de criacao (fromStatus nulo) nao segura o grupo.
+    expect(r.sql).toMatch(/FROM `lead_status_history` WHERE `lead_status_history`\.`leadId` = `leads`\.`id` AND `lead_status_history`\.`fromStatus` IS NOT NULL\)/);
+    expect(r.sql).not.toMatch(/`lead_status_history`\.`leadId` = `leads`\.`id`\)/);
     expect(r.sql).toMatch(/`lead_contatos`\.`atualizadoPorUserId` IS NOT NULL/);
   });
 });
