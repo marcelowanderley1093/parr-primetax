@@ -32,7 +32,7 @@ import ContatosCard from "@/components/ContatosCard";
 import EmpresaCard from "@/components/EmpresaCard";
 import ProcedimentosCard from "@/components/ProcedimentosCard";
 import CarteiraCard from "@/components/CarteiraCard";
-import { cpfValido, digitos, formatarCpf } from "@shared/contatos";
+import { cpfValido, digitos, emailValido, formatarCpf } from "@shared/contatos";
 
 function formatCurrency(value: string | null): string {
   if (!value) return "";
@@ -125,6 +125,15 @@ export default function LeadDetail() {
     const cpf = digitos(editForm.cpf);
     if (cpf && !cpfValido(cpf)) {
       toast.error("CPF inválido: confira os dígitos.");
+      return;
+    }
+    // E-mail e telefone podem ficar vazios (leads dos editais); preenchidos, precisam ser validos.
+    if (editForm.email.trim() && !emailValido(editForm.email)) {
+      toast.error("E-mail inválido: confira o endereço.");
+      return;
+    }
+    if (editForm.telefone.trim() && editForm.telefone.trim().length < 8) {
+      toast.error("Telefone muito curto: confira o número.");
       return;
     }
     updateLead.mutate({
