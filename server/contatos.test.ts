@@ -150,3 +150,22 @@ describe("leads.update com CPF", () => {
     await expect(caller.leads.update({ id: 1, cpf: "" })).rejects.toThrow("Database not available");
   });
 });
+
+describe("leads.update com e-mail e telefone vazios (lead dos editais)", () => {
+  const admin = () => appRouter.createCaller({ ...ctx(true), user: { ...ctx(true).user!, role: "admin" } });
+
+  it("aceita e-mail e telefone vazios junto com o CPF: passa da validacao e chega ao banco", async () => {
+    await expect(admin().leads.update({ id: 1, nome: "Fulano de Teste", email: "", telefone: "", cpf: "123.456.789-09" }))
+      .rejects.toThrow("Database not available");
+  });
+
+  it("aceita e-mail e telefone validos", async () => {
+    await expect(admin().leads.update({ id: 1, email: "contato@exemplo.test", telefone: "11999990000" }))
+      .rejects.toThrow("Database not available");
+  });
+
+  it("rejeita e-mail preenchido invalido e telefone curto", async () => {
+    await expect(admin().leads.update({ id: 1, email: "sem-arroba" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(admin().leads.update({ id: 1, telefone: "1234" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});

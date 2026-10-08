@@ -368,8 +368,10 @@ export const appRouter = router({
     update: protectedProcedure.input(z.object({
       id: z.number(),
       nome: z.string().min(2).optional(),
-      email: z.string().email().optional(),
-      telefone: z.string().min(8).optional(),
+      // Lead dos editais nao tem e-mail nem telefone (contatos ficam em lead_contatos): vazio e aceito;
+      // preenchido continua validado (corrigido em 08/10/2026 — o formulario sempre envia os dois campos).
+      email: z.string().trim().refine(v => v === "" || emailValido(v), { message: "E-mail inválido" }).optional(),
+      telefone: z.string().trim().refine(v => v === "" || v.length >= 8, { message: "Telefone muito curto" }).optional(),
       cnpj: z.string().optional(),
       devedorPrincipal: z.string().optional(),
       valorDivida: z.string().optional(),
@@ -379,7 +381,9 @@ export const appRouter = router({
       const { id, ...data } = input;
       const cleanData: Record<string, string | null> = {};
       for (const [key, value] of Object.entries(data)) {
-        if (value !== undefined) cleanData[key] = value || null;
+        if (value === undefined) continue;
+        // email e telefone sao NOT NULL no banco: vazio grava "", nao null.
+        cleanData[key] = key === "email" || key === "telefone" ? value : value || null;
       }
       return db.updateLead(id, cleanData as any);
     }),
